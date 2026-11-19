@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "xbgg"
 version.workspace = true
 edition.workspace = true
@@ -8,15 +8,35 @@ description = "XBGG: a lightweight full-screen console mode for Windows gaming"
 [dependencies]
 xbgg-core = { path = "../xbgg-core" }
 anyhow.workspace = true
-slint = { version = "1.19", features = ["raw-window-handle-06"] }
+# Software renderer: the UI uses no GPU at all, so it never takes VRAM from a
+# game or wakes a laptop's discrete GPU. Slint redraws only what changed.
+slint = { version = "1.19", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "accessibility",
+    "backend-winit",
+    "renderer-software",
+    "raw-window-handle-06",
+] }
 raw-window-handle = "0.6"
-gilrs = "0.11"
 rfd = "0.18"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 chrono ={ version = "0.4", default-features = false, features = ["clock", "std"] }
+# Windows SChannel + the system certificate store; no bundled TLS stack or root certs.
+ureq = { version = "3", default-features = false, features = ["native-tls-no-default", "json"] }
+sha2 = "0.11"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_UI_Input_XboxController",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 slint-build = "1.19"
+winresource = "0.1"

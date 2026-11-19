@@ -57,6 +57,11 @@ impl Library {
         &self.games
     }
 
+    /// Returns and clears the problems collected since the last call.
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
     /// Re-reads every store and rebuilds the visible list.
     pub fn rescan(&mut self) {
         let (scanned, warnings) = scan::scan_all();

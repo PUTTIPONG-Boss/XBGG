@@ -74,9 +74,11 @@ component Tile inherits Rectangle {
     in property <bool> selected;
     callback clicked();
 
+    // Covers arrive pre-sized with rounded corners baked in, so no clipping
+    // (expensive in the software renderer) is needed.
     border-radius: 18px;
-    clip: true;
-    background: @linear-gradient(160deg, root.game.accent 0%, root.game.accent.darker(0.7) 100%);
+    background: root.game.has-cover ? transparent
+        : @linear-gradient(160deg, root.game.accent 0%, root.game.accent.darker(0.7) 100%);
 
     if !root.game.has-cover: VerticalLayout {
         padding: 18px;
@@ -103,13 +105,14 @@ component Tile inherits Rectangle {
         width: 100%;
         height: 100%;
         source: root.game.cover;
-        image-fit: cover;
+        image-fit: fill;
     }
 
     // Dim tiles that are not focused.
     Rectangle {
         width: 100%;
         height: 100%;
+        border-radius: root.border-radius;
         background: #000000;
         opacity: root.selected ? 0 : 0.38;
         animate opacity { duration: 180ms; }
@@ -188,7 +191,12 @@ export component AppWindow inherits Window {
     // Background art for the focused entry, loaded lazily by Rust.
     in property <image> hero;
     in property <bool> has-hero;
-    // 0 = none, 1 = confirm exit, 2 = confirm remove
+    in property <string> version;
+    // Newer version available on GitHub ("" = none).
+    in property <string> update-version;
+    // True while a modal native dialog (file picker) or an update runs.
+    in property <bool> input-blocked;
+    // 0 = none, 1 = confirm exit, 2 = confirm remove, 3 = confirm update
     in-out property <int> dialog: 0;
 
     callback launch(int);
@@ -197,9 +205,23 @@ export component AppWindow inherits Window {
     callback rescan();
     callback quit();
     callback focused(int);
+    callback install-update();
+    // Window or tile size changed: artwork must be re-prepared at the new size.
+    callback layout-changed();
+
+    // Exposed so Rust can prepare artwork at exactly the drawn size.
+    out property <length> tile-width: root.tile-w;
+    out property <length> tile-height: root.tile-h;
+    out property <length> tile-radius: 18px;
 
     changed selected => {
         root.focused(root.selected);
+    }
+    changed tile-w => {
+        root.layout-changed();
+    }
+    changed width => {
+        root.layout-changed();
     }
 
     property <int> count: root.games.length + 1;
@@ -210,19 +232,27 @@ export component AppWindow inherits Window {
     property <length> gap: 26px;
     property <length> pad: root.width * 0.06;
 
+    property <bool> idle: root.dialog == 0 && !root.input-blocked;
+
     public function nav(delta: int) {
-        if (root.dialog == 0) {
+        if (root.idle) {
             root.selected = max(0, min(root.selected + delta, root.count - 1));
         }
     }
 
     public function activate() {
+        if (root.input-blocked) {
+            return;
+        }
         if (root.dialog == 1) {
             root.dialog = 0;
             root.quit();
         } else if (root.dialog == 2) {
             root.dialog = 0;
             root.remove-entry(root.selected);
+        } else if (root.dialog == 3) {
+            root.dialog = 0;
+            root.install-update();
         } else if (root.on-add-tile) {
             root.add-program();
         } else {
@@ -231,24 +261,32 @@ export component AppWindow inherits Window {
     }
 
     public function back() {
-        root.dialog = root.dialog != 0 ? 0 : 1;
+        if (!root.input-blocked) {
+            root.dialog = root.dialog != 0 ? 0 : 1;
+        }
     }
 
     public function secondary() {
-        if (root.dialog == 0 && !root.on-add-tile) {
+        if (root.idle && !root.on-add-tile) {
             root.dialog = 2;
         }
     }
 
     public function add() {
-        if (root.dialog == 0) {
+        if (root.idle) {
             root.add-program();
         }
     }
 
     public function refresh() {
-        if (root.dialog == 0) {
+        if (root.idle) {
             root.rescan();
+        }
+    }
+
+    public function menu() {
+        if (root.idle && root.update-version != "") {
+            root.dialog = 3;
         }
     }
 
@@ -292,26 +330,32 @@ export component AppWindow inherits Window {
                 root.refresh();
                 return accept;
             }
+            if (event.text == "u" || event.text == "U") {
+                root.menu();
+                return accept;
+            }
             reject
         }
     }
 
     // Background art of the focused game.
-    if root.has-hero && !root.on-add-tile: Image {
+    property <bool> show-hero: root.has-hero && !root.on-add-tile;
+
+    // Background art, pre-rendered at window size with dimming baked in.
+    if root.show-hero: Image {
         width: 100%;
         height: 100%;
         source: root.hero;
-        image-fit: cover;
-        opacity: 0.5;
+        image-fit: fill;
     }
 
-    Rectangle {
+    if !root.show-hero: Rectangle {
         width: 100%;
         height: 100%;
         background: @linear-gradient(135deg, root.on-add-tile ? #1b2a3a : root.current.accent.with-alpha(0.45) 0%, #07090d00 55%);
     }
 
-    Rectangle {
+    if !root.show-hero: Rectangle {
         width: 100%;
         height: 100%;
         background: @linear-gradient(180deg, #07090d55 0%, #07090dcc 55%, #07090d 100%);
@@ -346,6 +390,42 @@ export component AppWindow inherits Window {
             vertical-alignment: center;
         }
         Rectangle { }
+        if root.update-version != "": Rectangle {
+            border-radius: 15px;
+            background: #7cf5c42a;
+            border-width: 1px;
+            border-color: #7cf5c480;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 8px;
+                Text {
+                    text: "Update v" + root.update-version + " available";
+                    color: Palette.focus;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Start / U";
+                    color: Palette.muted;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.menu();
+                }
+            }
+        }
+        Text {
+            text: "v" + root.version;
+            color: Palette.muted;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
         Text {
             text: root.clock;
             color: Palette.text;
@@ -485,7 +565,9 @@ export component AppWindow inherits Window {
                 padding: 32px;
                 spacing: 14px;
                 Text {
-                    text: root.dialog == 1 ? "Exit XBGG?" : "Remove \"" + root.current.title + "\"?";
+                    text: root.dialog == 1 ? "Exit XBGG?"
+                        : root.dialog == 3 ? "Update to v" + root.update-version + "?"
+                        : "Remove \"" + root.current.title + "\"?";
                     color: Palette.text;
                     font-size: 26px;
                     font-weight: 800;
@@ -494,6 +576,8 @@ export component AppWindow inherits Window {
                 Text {
                     text: root.dialog == 1
                         ? "You'll go back to the Windows desktop."
+                        : root.dialog == 3
+                        ? "XBGG downloads the release from GitHub, verifies its SHA-256 checksum and restarts."
                         : (root.current.source == "Custom"
                             ? "It is removed from XBGG only. No files are deleted."
                             : "It is hidden from XBGG only. The game stays installed.");

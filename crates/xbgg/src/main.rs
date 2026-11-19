@@ -1,11 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The GNU toolchain links its own default manifest next to ours and ld warns
+// about the duplicate. Ours wins (verified: Windows loads the asInvoker /
+// PerMonitorV2 manifest from assets/xbgg.manifest), so the warning is noise.
+#![allow(linker_messages)]
 
 mod art;
 mod gamepad;
 mod platform;
+mod update;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use slint::{Color, ComponentHandle, Image, ModelRc, Timer, TimerMode, VecModel};
@@ -18,6 +24,8 @@ slint::include_modules!();
 /// Ignore repeated "Play" presses while a launch is already in progress.
 const LAUNCH_COOLDOWN: Duration = Duration::from_secs(3);
 const STATUS_DURATION: Duration = Duration::from_secs(5);
+/// Set on the process started after an update is installed.
+const RESTART_ENV: &str = "XBGG_RESTARTED_AFTER_UPDATE";
 
 struct App {
     library: RefCell<Library>,
@@ -26,6 +34,10 @@ struct App {
     last_launch: Cell<Option<Instant>>,
     picking_file: Cell<bool>,
     hero: art::HeroLoader,
+    covers: RefCell<art::CoverCache>,
+    layout_timer: Timer,
+    /// Filled by the background update check.
+    pending_update: Arc<Mutex<Option<update::Release>>>,
 }
 
 impl App {
@@ -33,13 +45,35 @@ impl App {
         let path = usize::try_from(index)
             .ok()
             .and_then(|i| self.library.borrow().games().get(i).and_then(|g| g.hero.clone()));
-        self.hero.request(ui, path);
+        let size = ui.window().size();
+        self.hero.request(ui, path, size.width, size.height);
+    }
+
+    /// Tile size in physical pixels, so covers are drawn 1:1.
+    fn cover_size(ui: &AppWindow) -> art::CoverSize {
+        let scale = ui.window().scale_factor();
+        let px = |logical: f32| (logical * scale).round().max(0.0) as u32;
+        art::CoverSize {
+            width: px(ui.get_tile_width()),
+            height: px(ui.get_tile_height()),
+            radius: px(ui.get_tile_radius()),
+        }
     }
 
     /// Pushes the library into the UI, optionally focusing the entry with `select_id`.
     fn sync(&self, ui: &AppWindow, select_id: Option<&str>) {
         let lib = self.library.borrow();
-        self.model.set_vec(lib.games().iter().map(to_tile).collect::<Vec<_>>());
+        let paths: Vec<_> = lib.games().iter().filter_map(|g| g.cover.clone()).collect();
+        let mut covers = self.covers.borrow_mut();
+        covers.ensure(&paths, Self::cover_size(ui));
+        covers.retain(&paths);
+        let tiles: Vec<GameTile> = lib
+            .games()
+            .iter()
+            .map(|g| to_tile(g, g.cover.as_deref().and_then(|p| covers.get(p))))
+            .collect();
+        drop(covers);
+        self.model.set_vec(tiles);
         let count = lib.games().len() as i32;
         ui.set_scanned_count(count);
         let selected = select_id
@@ -62,14 +96,98 @@ impl App {
     }
 }
 
+const HELP: &str = "\
+XBGG - full-screen console mode for Windows
+
+Usage: xbgg [OPTIONS]
+
+Options:
+  --windowed       Run in a window instead of full screen
+  --no-update      Skip the update check on startup
+  --list           Print the detected game library and exit
+  --check-update   Check GitHub for a newer release and exit
+  --version        Print the version and exit
+  --help           Show this help";
+
+/// Release builds abort on panic without a console; keep a record of why.
+fn install_crash_log() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(dir) = dirs_config_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            let line = format!(
+                "[{}] xbgg {} crashed: {info}\n",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                update::current_version()
+            );
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
+        default_hook(info);
+    }));
+}
+
+fn dirs_config_dir() -> Option<std::path::PathBuf> {
+    xbgg_core::store::default_path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
 fn main() -> anyhow::Result<()> {
+    install_crash_log();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "--list") {
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if has("--help") || has("-h") {
+        platform::attach_console();
+        println!("{HELP}");
+        return Ok(());
+    }
+    if has("--version") || has("-V") {
+        platform::attach_console();
+        println!("xbgg {}", update::current_version());
+        return Ok(());
+    }
+    if has("--list") {
+        platform::attach_console();
         return list_library();
     }
-    let windowed = args.iter().any(|a| a == "--windowed");
+    if has("--check-update") {
+        platform::attach_console();
+        return match update::check()? {
+            Some(r) => {
+                println!("Update available: {} -> {}", update::current_version(), r.version);
+                Ok(())
+            }
+            None => {
+                println!("Up to date ({})", update::current_version());
+                Ok(())
+            }
+        };
+    }
+    if let Some(unknown) = args.iter().find(|a| {
+        !matches!(a.as_str(), "--windowed" | "--no-update")
+    }) {
+        platform::attach_console();
+        eprintln!("Unknown option: {unknown}\n\n{HELP}");
+        std::process::exit(2);
+    }
+
+    // One shell at a time. After an update the new process starts while the
+    // old one is still closing, so it waits briefly for the lock.
+    let restarting = std::env::var_os(RESTART_ENV).is_some();
+    // Don't pass the marker on to games we launch.
+    std::env::remove_var(RESTART_ENV);
+    let wait = if restarting { Duration::from_secs(15) } else { Duration::ZERO };
+    let Some(_instance) = platform::single_instance(wait) else {
+        platform::focus_existing_instance();
+        return Ok(());
+    };
+
+    update::cleanup_previous();
 
     let ui = AppWindow::new()?;
+    ui.set_version(update::current_version().to_string().into());
     let model = Rc::new(VecModel::<GameTile>::default());
     ui.set_games(ModelRc::from(model.clone()));
 
@@ -80,17 +198,31 @@ fn main() -> anyhow::Result<()> {
         last_launch: Cell::new(None),
         picking_file: Cell::new(false),
         hero: art::HeroLoader::default(),
+        covers: RefCell::default(),
+        layout_timer: Timer::default(),
+        pending_update: Arc::default(),
     });
     app.sync(&ui, None);
-    report_warnings(&app, &ui);
+    let _ = report_warnings(&app, &ui);
 
     wire_callbacks(&app, &ui);
     let _clock = start_clock(&ui);
     start_gamepad(&ui);
+    if !has("--no-update") {
+        start_update_check(&app, &ui);
+    }
 
-    if !windowed {
+    if !has("--windowed") {
         ui.window().set_fullscreen(true);
     }
+    // The real window size and DPI are only known once the window is shown;
+    // prepare artwork for them then.
+    let weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(100), move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.invoke_layout_changed();
+        }
+    });
     ui.run()?;
     Ok(())
 }
@@ -135,6 +267,7 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
             if app.picking_file.replace(true) {
                 return;
             }
+            ui.set_input_blocked(true);
             let picker = rfd::AsyncFileDialog::new()
                 .set_title("Add a game or app to XBGG")
                 .add_filter("Games, apps and shortcuts", ADDABLE_EXTENSIONS)
@@ -146,9 +279,14 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
                 let app = task_app;
                 let picked = picker.await;
                 app.picking_file.set(false);
-                let (Some(ui), Some(file)) = (weak.upgrade(), picked) else { return };
+                let Some(ui) = weak.upgrade() else { return };
+                ui.set_input_blocked(false);
+                let Some(file) = picked else { return };
                 let path = file.path().to_path_buf();
-                let added = app.library.borrow_mut().add_custom(&path).map(|i| {
+                // Keep the mutable borrow in its own statement: reading the
+                // library while `borrow_mut()` is alive would panic.
+                let result = app.library.borrow_mut().add_custom(&path);
+                let added = result.map(|i| {
                     let lib = app.library.borrow();
                     let g = &lib.games()[i];
                     (g.title.clone(), g.id.clone())
@@ -163,6 +301,7 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
             });
             if spawned.is_err() {
                 app.picking_file.set(false);
+                ui.set_input_blocked(false);
             }
         });
     }
@@ -202,8 +341,23 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
                 .map(|g| g.id.clone());
             app.library.borrow_mut().rescan();
             app.sync(&ui, keep.as_deref());
-            let n = app.library.borrow().games().len();
-            app.set_status(&ui, format!("Library refreshed: {n} entries"));
+            if !report_warnings(&app, &ui) {
+                let n = app.library.borrow().games().len();
+                app.set_status(&ui, format!("Library refreshed: {n} entries"));
+            }
+        });
+    }
+
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_layout_changed(move || {
+            // Debounced: resizing fires this many times in a row.
+            let (app2, weak) = (app.clone(), weak.clone());
+            app.layout_timer.start(TimerMode::SingleShot, Duration::from_millis(150), move || {
+                if let Some(ui) = weak.upgrade() {
+                    app2.sync(&ui, None);
+                }
+            });
         });
     }
 
@@ -216,23 +370,63 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
         });
     }
 
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_install_update(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(release) = app.pending_update.lock().ok().and_then(|g| g.clone()) else { return };
+            ui.set_input_blocked(true);
+            ui.set_status(format!("Downloading v{}…", release.version).into());
+
+            let weak = ui.as_weak();
+            std::thread::spawn(move || {
+                let result = update::install(&release);
+                let _ = weak.upgrade_in_event_loop(move |ui| match result {
+                    Ok(exe) => {
+                        ui.set_status("Update installed, restarting…".into());
+                        let args: Vec<String> = std::env::args().skip(1).collect();
+                        match std::process::Command::new(&exe)
+                            .args(args)
+                            .env_remove("XBGG_PRETEND_VERSION")
+                            .env(RESTART_ENV, "1")
+                            .spawn()
+                        {
+                            Ok(_) => {
+                                let _ = slint::quit_event_loop();
+                            }
+                            Err(e) => {
+                                ui.set_input_blocked(false);
+                                ui.set_status(format!("Updated; restart XBGG to finish ({e})").into());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        ui.set_input_blocked(false);
+                        ui.set_status(format!("Update failed: {e:#}").into());
+                    }
+                });
+            });
+        });
+    }
+
     ui.on_quit(|| {
         let _ = slint::quit_event_loop();
     });
 }
 
-fn report_warnings(app: &App, ui: &AppWindow) {
-    let mut lib = app.library.borrow_mut();
-    for w in &lib.warnings {
+/// Shows the first new warning in the status line (all go to stderr).
+/// Returns whether there was one.
+fn report_warnings(app: &App, ui: &AppWindow) -> bool {
+    let warnings = app.library.borrow_mut().take_warnings();
+    for w in &warnings {
         eprintln!("xbgg: {w}");
     }
-    if let Some(first) = lib.warnings.first() {
-        let text = first.clone();
-        drop(lib);
-        app.set_status(ui, text);
-        app.library.borrow_mut().warnings.clear();
-    } else {
-        lib.warnings.clear();
+    match warnings.into_iter().next() {
+        Some(first) => {
+            app.set_status(ui, first);
+            true
+        }
+        None => false,
     }
 }
 
@@ -241,7 +435,11 @@ fn start_clock(ui: &AppWindow) -> Timer {
         let weak = ui.as_weak();
         move || {
             if let Some(ui) = weak.upgrade() {
-                ui.set_clock(chrono::Local::now().format("%H:%M").to_string().into());
+                let now = chrono::Local::now().format("%H:%M").to_string();
+                // Only touch the property when the text changes, to avoid redraws.
+                if ui.get_clock() != now.as_str() {
+                    ui.set_clock(now.into());
+                }
             }
         }
     };
@@ -253,11 +451,8 @@ fn start_clock(ui: &AppWindow) -> Timer {
 
 fn start_gamepad(ui: &AppWindow) {
     let weak = ui.as_weak();
-    gamepad::spawn(move |action| {
+    gamepad::spawn(platform::process_is_foreground, move |action| {
         let _ = weak.upgrade_in_event_loop(move |ui| {
-            if !platform::is_foreground(&ui) {
-                return;
-            }
             match action {
                 PadAction::Left => ui.invoke_nav(-1),
                 PadAction::Right => ui.invoke_nav(1),
@@ -268,13 +463,30 @@ fn start_gamepad(ui: &AppWindow) {
                 PadAction::Add => ui.invoke_add(),
                 PadAction::Secondary => ui.invoke_secondary(),
                 PadAction::Refresh => ui.invoke_refresh(),
+                PadAction::Menu => ui.invoke_menu(),
             }
         });
     });
 }
 
-fn to_tile(g: &Game) -> GameTile {
-    let cover = g.cover.as_deref().and_then(|p| Image::load_from_path(p).ok());
+fn start_update_check(app: &App, ui: &AppWindow) {
+    let pending = app.pending_update.clone();
+    let weak = ui.as_weak();
+    std::thread::spawn(move || match update::check() {
+        Ok(Some(release)) => {
+            let version = release.version.to_string();
+            if let Ok(mut slot) = pending.lock() {
+                *slot = Some(release);
+            }
+            let _ = weak.upgrade_in_event_loop(move |ui| ui.set_update_version(version.into()));
+        }
+        Ok(None) => {}
+        // Offline or rate-limited: not worth bothering the player about.
+        Err(e) => eprintln!("xbgg: update check failed: {e:#}"),
+    });
+}
+
+fn to_tile(g: &Game, cover: Option<Image>) -> GameTile {
     GameTile {
         id: g.id.as_str().into(),
         title: g.title.as_str().into(),
