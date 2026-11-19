@@ -149,6 +149,13 @@ published GitHub release.
 | No `xbgg.exe.old` / `xbgg.exe.new` left behind | ✅ |
 | **Result** | **PASS** |
 
+**Real-world update, released binaries only:** the published v0.1.0 `xbgg.exe`
+was downloaded from GitHub and run unmodified. It showed "Update v0.1.1
+available"; clicking the badge opened "Update to v0.1.1?", Enter confirmed,
+the process exited 3 s later and restarted as v0.1.1. The installed file's
+SHA-256 (`c0498094…a0e5db`) equals the published v0.1.1 checksum and file
+version reads 0.1.1. **PASS.**
+
 ## 7. Antivirus
 
 Microsoft Defender (engine 1.1.26110.3, signatures 1.463.373.0), real-time
