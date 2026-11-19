@@ -1,0 +1,522 @@
+// XBGG console shell UI.
+
+export struct GameTile {
+    id: string,
+    title: string,
+    source: string,
+    cover: image,
+    has-cover: bool,
+    accent: color,
+    initials: string,
+}
+
+global Palette {
+    out property <color> bg: #07090d;
+    out property <color> panel: #141922;
+    out property <color> text: #f2f5fa;
+    out property <color> muted: #9aa4b6;
+    out property <color> focus: #7cf5c4;
+    out property <color> btn-a: #2f9e5a;
+    out property <color> btn-b: #d24a3f;
+    out property <color> btn-x: #3270e0;
+    out property <color> btn-y: #d9a520;
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    border-radius: 12px;
+    background: #ffffff1c;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        Text {
+            text: root.text;
+            color: Palette.text;
+            font-size: 13px;
+            font-weight: 600;
+        }
+    }
+}
+
+component Hint inherits HorizontalLayout {
+    in property <string> key;
+    in property <string> label;
+    in property <color> tint;
+    spacing: 8px;
+    Rectangle {
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        background: root.tint;
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.key;
+            color: white;
+            font-size: 14px;
+            font-weight: 800;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Text {
+        text: root.label;
+        color: Palette.text;
+        font-size: 15px;
+        vertical-alignment: center;
+    }
+}
+
+component Tile inherits Rectangle {
+    in property <GameTile> game;
+    in property <bool> selected;
+    callback clicked();
+
+    border-radius: 18px;
+    clip: true;
+    background: @linear-gradient(160deg, root.game.accent 0%, root.game.accent.darker(0.7) 100%);
+
+    if !root.game.has-cover: VerticalLayout {
+        padding: 18px;
+        alignment: center;
+        spacing: 12px;
+        Text {
+            text: root.game.initials;
+            color: #ffffffe0;
+            font-size: root.height * 0.16;
+            font-weight: 800;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.game.title;
+            color: #ffffffcc;
+            font-size: 16px;
+            font-weight: 600;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+    }
+
+    if root.game.has-cover: Image {
+        width: 100%;
+        height: 100%;
+        source: root.game.cover;
+        image-fit: cover;
+    }
+
+    // Dim tiles that are not focused.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000;
+        opacity: root.selected ? 0 : 0.38;
+        animate opacity { duration: 180ms; }
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: root.border-radius;
+        border-width: root.selected ? 4px : 0px;
+        border-color: Palette.focus;
+        animate border-width { duration: 140ms; }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component AddTile inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+
+    border-radius: 18px;
+    background: root.selected ? #1c2430 : #10151d;
+    border-width: root.selected ? 4px : 2px;
+    border-color: root.selected ? Palette.focus : #ffffff26;
+    animate background, border-width { duration: 140ms; }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Text {
+            text: "+";
+            color: Palette.text;
+            font-size: root.height * 0.2;
+            font-weight: 300;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Add game or app";
+            color: Palette.muted;
+            font-size: 17px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "XBGG";
+    icon: @image-url("../assets/icon.png");
+    background: Palette.bg;
+    preferred-width: 1600px;
+    preferred-height: 900px;
+    min-width: 960px;
+    min-height: 600px;
+    default-font-family: "Segoe UI";
+    forward-focus: keys;
+
+    in property <[GameTile]> games;
+    in-out property <int> selected: 0;
+    in property <string> clock;
+    in property <string> status;
+    in property <int> scanned-count;
+    // Background art for the focused entry, loaded lazily by Rust.
+    in property <image> hero;
+    in property <bool> has-hero;
+    // 0 = none, 1 = confirm exit, 2 = confirm remove
+    in-out property <int> dialog: 0;
+
+    callback launch(int);
+    callback add-program();
+    callback remove-entry(int);
+    callback rescan();
+    callback quit();
+    callback focused(int);
+
+    changed selected => {
+        root.focused(root.selected);
+    }
+
+    property <int> count: root.games.length + 1;
+    property <bool> on-add-tile: root.selected >= root.games.length;
+    property <GameTile> current: root.games[root.selected];
+    property <length> tile-h: root.height * 0.46;
+    property <length> tile-w: root.tile-h * 2 / 3;
+    property <length> gap: 26px;
+    property <length> pad: root.width * 0.06;
+
+    public function nav(delta: int) {
+        if (root.dialog == 0) {
+            root.selected = max(0, min(root.selected + delta, root.count - 1));
+        }
+    }
+
+    public function activate() {
+        if (root.dialog == 1) {
+            root.dialog = 0;
+            root.quit();
+        } else if (root.dialog == 2) {
+            root.dialog = 0;
+            root.remove-entry(root.selected);
+        } else if (root.on-add-tile) {
+            root.add-program();
+        } else {
+            root.launch(root.selected);
+        }
+    }
+
+    public function back() {
+        root.dialog = root.dialog != 0 ? 0 : 1;
+    }
+
+    public function secondary() {
+        if (root.dialog == 0 && !root.on-add-tile) {
+            root.dialog = 2;
+        }
+    }
+
+    public function add() {
+        if (root.dialog == 0) {
+            root.add-program();
+        }
+    }
+
+    public function refresh() {
+        if (root.dialog == 0) {
+            root.rescan();
+        }
+    }
+
+    keys := FocusScope {
+        width: 100%;
+        height: 100%;
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow) {
+                root.nav(-1);
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.nav(1);
+                return accept;
+            }
+            if (event.text == Key.PageUp || event.text == Key.Home) {
+                root.nav(event.text == Key.Home ? -10000 : -5);
+                return accept;
+            }
+            if (event.text == Key.PageDown || event.text == Key.End) {
+                root.nav(event.text == Key.End ? 10000 : 5);
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == " ") {
+                root.activate();
+                return accept;
+            }
+            if (event.text == Key.Escape || event.text == Key.Backspace) {
+                root.back();
+                return accept;
+            }
+            if (event.text == Key.Delete) {
+                root.secondary();
+                return accept;
+            }
+            if (event.text == Key.Insert) {
+                root.add();
+                return accept;
+            }
+            if (event.text == Key.F5) {
+                root.refresh();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Background art of the focused game.
+    if root.has-hero && !root.on-add-tile: Image {
+        width: 100%;
+        height: 100%;
+        source: root.hero;
+        image-fit: cover;
+        opacity: 0.5;
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: @linear-gradient(135deg, root.on-add-tile ? #1b2a3a : root.current.accent.with-alpha(0.45) 0%, #07090d00 55%);
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: @linear-gradient(180deg, #07090d55 0%, #07090dcc 55%, #07090d 100%);
+    }
+
+    // Top bar.
+    HorizontalLayout {
+        x: root.pad;
+        y: 32px;
+        width: root.width - 2 * root.pad;
+        height: 40px;
+        spacing: 16px;
+        Text {
+            text: "XBGG";
+            color: Palette.text;
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: 3px;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: Palette.focus;
+        }
+        Text {
+            text: root.scanned-count + " in library";
+            color: Palette.muted;
+            font-size: 15px;
+            vertical-alignment: center;
+        }
+        Rectangle { }
+        Text {
+            text: root.clock;
+            color: Palette.text;
+            font-size: 22px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    // Title of the focused entry.
+    VerticalLayout {
+        x: root.pad;
+        y: root.height * 0.15;
+        width: root.width - 2 * root.pad;
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.on-add-tile ? "Add game or app" : root.current.title;
+            color: Palette.text;
+            font-size: min(56px, root.height * 0.06);
+            font-weight: 800;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            alignment: start;
+            Badge {
+                text: root.on-add-tile ? "Pick an .exe, shortcut or script" : root.current.source;
+            }
+        }
+    }
+
+    // Carousel.
+    Rectangle {
+        x: root.pad - root.selected * (root.tile-w + root.gap);
+        y: root.height * 0.34;
+        width: root.width;
+        height: root.tile-h + 30px;
+        animate x { duration: 240ms; easing: ease-out; }
+
+        for g[i] in root.games: Tile {
+            x: i * (root.tile-w + root.gap);
+            y: i == root.selected ? 0px : 22px;
+            width: root.tile-w;
+            height: root.tile-h;
+            game: g;
+            selected: i == root.selected;
+            animate y { duration: 180ms; easing: ease-out; }
+            clicked => {
+                if (root.selected == i) {
+                    root.activate();
+                } else {
+                    root.selected = i;
+                }
+            }
+        }
+
+        AddTile {
+            x: root.games.length * (root.tile-w + root.gap);
+            y: root.on-add-tile ? 0px : 22px;
+            width: root.tile-w;
+            height: root.tile-h;
+            selected: root.on-add-tile;
+            animate y { duration: 180ms; easing: ease-out; }
+            clicked => {
+                if (root.on-add-tile) {
+                    root.activate();
+                } else {
+                    root.selected = root.games.length;
+                }
+            }
+        }
+    }
+
+    // Bottom hints.
+    HorizontalLayout {
+        x: root.pad;
+        y: root.height - 76px;
+        width: root.width - 2 * root.pad;
+        height: 36px;
+        spacing: 28px;
+        Hint {
+            key: "A";
+            label: root.on-add-tile ? "Add" : "Play";
+            tint: Palette.btn-a;
+        }
+        Hint {
+            key: "X";
+            label: "Add app";
+            tint: Palette.btn-x;
+        }
+        Hint {
+            key: "Y";
+            label: "Remove";
+            tint: Palette.btn-y;
+        }
+        Hint {
+            key: "B";
+            label: "Exit";
+            tint: Palette.btn-b;
+        }
+        Rectangle { }
+        Text {
+            text: root.status != "" ? root.status : "Keyboard: ← →  Enter  Ins  Del  F5  Esc";
+            color: root.status != "" ? Palette.text : Palette.muted;
+            font-size: 15px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+        }
+    }
+
+    // Confirmation dialog.
+    if root.dialog != 0: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000b8;
+
+        TouchArea {
+            clicked => {
+                root.dialog = 0;
+            }
+        }
+
+        Rectangle {
+            width: min(560px, root.width - 48px);
+            height: 230px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.panel;
+            border-radius: 20px;
+            border-width: 1px;
+            border-color: #ffffff22;
+
+            TouchArea { }
+
+            VerticalLayout {
+                padding: 32px;
+                spacing: 14px;
+                Text {
+                    text: root.dialog == 1 ? "Exit XBGG?" : "Remove \"" + root.current.title + "\"?";
+                    color: Palette.text;
+                    font-size: 26px;
+                    font-weight: 800;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.dialog == 1
+                        ? "You'll go back to the Windows desktop."
+                        : (root.current.source == "Custom"
+                            ? "It is removed from XBGG only. No files are deleted."
+                            : "It is hidden from XBGG only. The game stays installed.");
+                    color: Palette.muted;
+                    font-size: 16px;
+                    wrap: word-wrap;
+                }
+                Rectangle { }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 28px;
+                    Hint {
+                        key: "A";
+                        label: "Confirm (Enter)";
+                        tint: Palette.btn-a;
+                    }
+                    Hint {
+                        key: "B";
+                        label: "Cancel (Esc)";
+                        tint: Palette.btn-b;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "xbgg-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Game library scanning, storage and launching for XBGG"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs = "7"
+open = "5"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"

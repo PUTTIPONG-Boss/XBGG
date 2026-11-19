@@ -1,0 +1,22 @@
+[package]
+name = "xbgg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "XBGG: a lightweight full-screen console mode for Windows gaming"
+
+[dependencies]
+xbgg-core = { path = "../xbgg-core" }
+anyhow.workspace = true
+slint = { version = "1.19", features = ["raw-window-handle-06"] }
+raw-window-handle = "0.6"
+gilrs = "0.11"
+rfd = "0.18"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+chrono ={ version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+slint-build = "1.19"
