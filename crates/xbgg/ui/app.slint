@@ -330,7 +330,9 @@ export component AppWindow inherits Window {
                 root.refresh();
                 return accept;
             }
-            if (event.text == "u" || event.text == "U") {
+            // F2 works with every keyboard layout (a letter key types "อ" on
+            // a Thai layout, for example); "u" is kept as a convenience.
+            if (event.text == Key.F2 || event.text == "u" || event.text == "U") {
                 root.menu();
                 return accept;
             }
@@ -407,7 +409,7 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                 }
                 Text {
-                    text: "Start / U";
+                    text: "Start / F2";
                     color: Palette.muted;
                     font-size: 13px;
                     vertical-alignment: center;

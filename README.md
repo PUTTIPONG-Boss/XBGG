@@ -38,7 +38,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 1920×1080, 7-game library, release build. Full method and raw results:
 [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
-| Metric | XBGG v0.1.0 |
+| Metric | XBGG v0.1.1 |
 |---|---|
 | GPU memory (VRAM) | **0 MB** — UI is rendered on the CPU; a laptop's discrete GPU is never woken |
 | Private memory | ~26 MB |
@@ -49,7 +49,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 
 ## Install
 
-1. Download `XBGG-v0.1.0-windows-x64.zip` (or just `xbgg.exe`) from the
+1. Download `XBGG-v<version>-windows-x64.zip` (or just `xbgg.exe`) from the
    [latest release](https://github.com/PUTTIPONG-Boss/XBGG/releases/latest).
 2. Unzip it to a folder you can write to, e.g. `D:\Apps\XBGG` (needed for
    in-app updates — avoid `Program Files`).
@@ -71,7 +71,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 | X | Insert | Add game or app |
 | Y | Delete | Remove (custom) / Hide (scanned) |
 | View | F5 | Rescan library |
-| Menu | U | Install available update |
+| Menu | F2 | Install available update |
 | B | Esc / Backspace | Back / Exit (asks first) |
 
 Mouse: click a tile to focus it, click again to play.
@@ -113,8 +113,9 @@ cargo test                   # unit tests
 ```
 
 Repeatable performance and end-to-end tests live in [`tools/`](tools):
-`bench.ps1`, `soak.ps1` (leaks), `focus-soak.ps1`, `custom-entry-test.ps1`
-and `game-launch-test.ps1`.
+`bench.ps1`, `soak.ps1` (leaks), `focus-soak.ps1`, `custom-entry-test.ps1`,
+`game-launch-test.ps1` and `update-test.ps1`. `package.ps1` builds the release
+assets into `dist\`.
 
 ## Project layout
 

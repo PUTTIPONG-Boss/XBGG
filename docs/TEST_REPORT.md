@@ -1,7 +1,12 @@
-# XBGG v0.1.0 — Test Report
+# XBGG v0.1.1 — Test Report
 
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
-`x86_64-pc-windows-gnu`.
+`x86_64-pc-windows-gnu`. Final binary: `xbgg.exe` v0.1.1, SHA-256
+`c049809493632f7ae8f718de5f2ca9176a693d2f635f02ad2ed20bd571a0e5db`.
+
+v0.1.1 differs from v0.1.0 only by the keyboard-layout fix (bug #10). The
+benchmark, add/launch/remove, focus-switch, Deadlock, update and Defender
+checks were re-run on the v0.1.1 binary; the long soaks ran on v0.1.0.
 
 ## Test environment
 
@@ -78,19 +83,19 @@ Foreground alternated between XBGG and a stand-in game window 40 times.
 
 ## 4. End-to-end: real game — `tools/game-launch-test.ps1 -GameProcess deadlock -Title Deadlock`
 
-Run three times during development and once on the final release binary
-(`dist\xbgg.exe`, SHA-256 `6be13711…41caec`). Enter is pressed twice to check
-that a double press doesn't start a second copy.
+Run three times during development, then on the v0.1.0 and v0.1.1 release
+binaries. Enter is pressed twice to check that a double press doesn't start a
+second copy.
 
-| Check | Final run |
-|---|---|
-| Game process started | 3.3 s after Enter |
-| Game instances running | 1 (double press ignored) |
-| Game window took the foreground over full-screen XBGG | 14.4 s (game load time) |
-| **XBGG CPU while the game ran (45 s)** | **16 ms total — 0.04 % of one core** |
-| XBGG private memory / GPU memory during play | 26.6 MB / 0 MB |
-| XBGG threads during play | 10 (controller polling stopped) |
-| Deadlock for reference | 5.8 GB private, 1.5 GB VRAM |
+| Check | v0.1.0 | v0.1.1 |
+|---|---|---|
+| Game process started | 3.3 s after Enter | 2.3 s after Enter |
+| Game instances running | 1 (double press ignored) | 1 |
+| Game window took the foreground over full-screen XBGG | 14.4 s (game load time) | 12.5 s |
+| **XBGG CPU while the game ran (45 s)** | **16 ms — 0.04 % of one core** | **16 ms — 0.04 %** |
+| XBGG private memory / GPU memory during play | 26.6 MB / 0 MB | 26.1 MB / 0 MB |
+| XBGG threads during play | 10 (controller polling stopped) | 10 |
+| Deadlock for reference | 5.8 GB private, 1.5 GB VRAM | 5.8 GB, 1.5 GB VRAM |
 | Game closed | ✅ (WM_CLOSE; see limitations) |
 | XBGG back in the foreground after the game exits | ✅ |
 | Deadlock listed first afterwards (recently played) | ✅ |
@@ -128,9 +133,21 @@ and restores the user's `library.json`.
 | Embedded manifest is the one Windows loads (`asInvoker`, PerMonitorV2 DPI) | ✅ |
 | Version info (`FileDescription`, `ProductVersion` 0.1.0, icon) | ✅ |
 
-### In-app update, end to end
+### In-app update, end to end — `tools/update-test.ps1`
 
-Verified against the published v0.1.0 release (see below).
+A copy of `xbgg.exe` with 16 extra bytes appended (so its hash differs) runs
+as a pretend older version (`XBGG_PRETEND_VERSION=0.0.1`) against the
+published GitHub release.
+
+| Check | Result |
+|---|---|
+| `--check-update` → "Update available: 0.0.1 -> 0.1.0" | ✅ |
+| "Update available" badge shown in the top bar | ✅ |
+| F2 opens the update dialog, Enter confirms | ✅ |
+| Old process exits, new one starts (single-instance hand-over) | ✅ 4 s after confirming |
+| Installed binary's SHA-256 equals the release's `xbgg.exe.sha256` | ✅ |
+| No `xbgg.exe.old` / `xbgg.exe.new` left behind | ✅ |
+| **Result** | **PASS** |
 
 ## 7. Antivirus
 
@@ -139,8 +156,8 @@ protection on for the whole test session.
 
 | Check | Result |
 |---|---|
-| On-demand scan of `xbgg.exe` (release asset) | No threats |
-| On-demand scan of `XBGG-v0.1.0-windows-x64.zip` | No threats |
+| On-demand scan of `xbgg.exe` v0.1.0 and v0.1.1 (release assets) | No threats |
+| On-demand scan of `XBGG-v0.1.0-windows-x64.zip` and `XBGG-v0.1.1-windows-x64.zip` | No threats |
 | Detections or Defender events mentioning `xbgg` during all builds and test runs | None |
 
 Design choices that keep heuristics quiet: runs `asInvoker` (never asks for
@@ -162,6 +179,7 @@ or memory access into games (anti-cheat safe).
 | 7 | Low | `--check-update` | With no published release yet, GitHub's 404 was reported as an error. | 404 means "no update". |
 | 8 | Low | Review | Rescan warnings accumulated in memory and were never shown. | Shown in the status line, then cleared. |
 | 9 | Low | Review | Starting XBGG twice opened two full-screen shells. | Single-instance lock; restart after update waits for the old process. |
+| 10 | Medium | `update-test.ps1` (shipped in v0.1.0) | The `U` shortcut never fired on a Thai keyboard layout: the key types "อ", and Slint matches typed text. | **v0.1.1**: shortcut is F2 (layout-independent); `U` kept for Latin layouts. |
 
 ## 9. Known limitations
 

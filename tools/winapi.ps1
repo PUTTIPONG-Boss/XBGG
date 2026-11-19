@@ -14,6 +14,7 @@ public static class Native {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr proc, uint flags);
+  [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
@@ -44,13 +45,18 @@ if (Get-Process xbgg -ErrorAction SilentlyContinue) {
     throw "xbgg.exe is already running (pid $((Get-Process xbgg).Id -join ', ')); close it before testing"
 }
 
-$script:VK = @{ Left = 0x25; Right = 0x27; Enter = 0x0D; Esc = 0x1B; Del = 0x2E; Ins = 0x2D; F5 = 0x74; End = 0x23; Home = 0x24; U = 0x55 }
+$script:VK = @{ Left = 0x25; Right = 0x27; Enter = 0x0D; Esc = 0x1B; Del = 0x2E; Ins = 0x2D; F5 = 0x74; F2 = 0x71; End = 0x23; Home = 0x24; U = 0x55 }
 
 function Send-Key([IntPtr]$hwnd, [string]$name, [int]$times = 1, [int]$delayMs = 60) {
     $vk = $script:VK[$name]
+    # Real keyboards send a scan code; winit derives letters from it.
+    $scan = [int64][XbggTest.Native]::MapVirtualKey([uint32]$vk, 0)
+    $ext = if ($vk -in 0x21..0x2E) { 1 -shl 24 } else { 0 }   # navigation keys are "extended"
+    $down = [IntPtr](1 -bor ($scan -shl 16) -bor $ext)
+    $up = [IntPtr]([int64]0xC0000001 -bor ($scan -shl 16) -bor $ext)
     for ($i = 0; $i -lt $times; $i++) {
-        [XbggTest.Native]::PostMessage($hwnd, 0x100, [IntPtr]$vk, [IntPtr]1) | Out-Null
-        [XbggTest.Native]::PostMessage($hwnd, 0x101, [IntPtr]$vk, [IntPtr]0xC0000001) | Out-Null
+        [XbggTest.Native]::PostMessage($hwnd, 0x100, [IntPtr]$vk, $down) | Out-Null
+        [XbggTest.Native]::PostMessage($hwnd, 0x101, [IntPtr]$vk, $up) | Out-Null
         Start-Sleep -Milliseconds $delayMs
     }
 }

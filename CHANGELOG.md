@@ -4,6 +4,14 @@ All notable changes to XBGG are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-20
+
+### Fixed
+- The "install update" keyboard shortcut did nothing on non-Latin keyboard
+  layouts (e.g. Thai, where the U key types "อ"). It is now **F2**, which works
+  with every layout; `U` still works on Latin layouts. The controller's Menu
+  button and clicking the update badge were not affected.
+
 ## [0.1.0] - 2026-11-20
 
 First public release: the game library shell.
@@ -32,4 +40,5 @@ First public release: the game library shell.
 
 See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for measurements.
 
+[0.1.1]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.1.0
