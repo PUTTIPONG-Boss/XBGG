@@ -3,7 +3,7 @@
   Repeats one kind of action many times and samples private memory, to find
   which action (if any) grows memory. Modes: nav, menu, rescan.
 #>
-param([ValidateSet('nav', 'menu', 'rescan')] [string]$Mode = 'nav', [int]$Rounds = 400, [string]$Exe = "")
+param([ValidateSet('nav', 'menu', 'rescan', 'layout')] [string]$Mode = 'nav', [int]$Rounds = 400, [string]$Exe = "")
 $ErrorActionPreference = 'Stop'
 if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\target\release\xbgg.exe' }
 . "$PSScriptRoot\winapi.ps1"
@@ -17,6 +17,8 @@ for ($i = 1; $i -le $Rounds; $i++) {
         'nav' { Send-Key $h Down 1 90; Send-Key $h Up 1 90 }        # two cover loads
         'menu' { Send-Key $h F2 1 50; Send-Key $h Down 2 30; Send-Key $h Enter 1 120; Send-Key $h Esc 2 60 }
         'rescan' { Send-Key $h F5 1 150 }
+        # Menu row 5 is "layout" (no update pending, no boost running).
+        'layout' { Send-Key $h F2 1 80; Send-Key $h Down 5 30; Send-Key $h Enter 1 600; Send-Key $h Esc 1 300 }
     }
     if ($i % [math]::Max(1, [int]($Rounds / 10)) -eq 0) {
         Start-Sleep -Milliseconds 400

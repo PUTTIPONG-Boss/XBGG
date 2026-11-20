@@ -3,6 +3,7 @@
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
 `x86_64-pc-windows-gnu`.
 
+- **v0.4.0** (layout switch, square everything): see [v0.4.0](#v040--two-layouts) below.
 - **v0.3.0** (terminal UI): see [v0.3.0](#v030--terminal-ui) below.
 - **v0.2.0** (Boost mode): see [Boost](#boost) and [v0.2.0 regression](#v020-regression)
   below. Final binary `xbgg.exe` v0.2.0, SHA-256
@@ -12,6 +13,25 @@ Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1
   Defender found no threats in it or the zip.
 - v0.1.1 (`c0498094…a0e5db`) differs from v0.1.0 only by the keyboard-layout
   fix (bug #10).
+
+## v0.4.0 — two layouts
+
+The console (carousel) layout is back as an option next to the terminal
+layout, with square tiles, labels, keys and checkboxes.
+
+| Check | Result |
+|---|---|
+| Switch to console via *Menu → layout*; choice saved to `library.json` | ✅ |
+| Screens reviewed in console layout: home, carousel move, menu, apps to freeze, exit dialog, add tile | ✅ square everywhere |
+| Unknown `layout` value from a newer version → falls back to terminal, no warning, file kept | ✅ unit test |
+| `bench.ps1` console / terminal | 25.9 MB / 13.9 MB private, 0 MB VRAM in both |
+| `leak-isolate.ps1 -Mode nav` in console, 600 rounds (covers + background art) | flat, 25.7–25.9 MB |
+| `leak-isolate.ps1 -Mode layout`, 60 switches | settles at ~17.4 MB in terminal after the first switches (heap keeps freed pages for reuse), no growth afterwards |
+| Unit tests | 32/32; clippy clean |
+| `soak.ps1 -Cycles 150` | peak 17.1 MB, handles 290 → 280, GDI 17 → 17 |
+| `focus-soak.ps1 -Switches 30` | threads 13 → 13, handles 291 → 291 (25/30 foreground hand-overs: the user's Deadlock was running full screen during this run) |
+| `custom-entry-test.ps1`, `update-test.ps1` | PASS |
+| `game-launch-test.ps1`, `boost-test.ps1` | not re-run: the user was playing Deadlock at the time; Boost code unchanged since v0.3.0 |
 
 ## v0.3.0 — terminal UI
 

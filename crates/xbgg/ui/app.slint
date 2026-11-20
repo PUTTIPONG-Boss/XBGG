@@ -18,6 +18,11 @@ export struct GameTile {
     detail: string,
     // install folder or file
     path: string,
+    // Console layout only: cover at tile size, or a flat colour + initials.
+    cover: image,
+    has-cover: bool,
+    accent: color,
+    initials: string,
 }
 
 // One row of the menu. `value` "On"/"Off" renders as a checkbox.
@@ -121,6 +126,76 @@ component Kv inherits HorizontalLayout {
     }
 }
 
+// A square checkbox (console layout; the terminal layout prints "[x]").
+component Check inherits Rectangle {
+    in property <bool> on;
+    in property <color> tone: T.fg;
+    width: T.fs * 0.95;
+    height: self.width;
+    border-width: 2px;
+    border-color: root.tone;
+    Rectangle {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: parent.height - 8px;
+        background: root.on ? root.tone : transparent;
+    }
+}
+
+// Console layout: one game in the carousel. Square, no gradient.
+component Tile inherits Rectangle {
+    in property <GameTile> game;
+    in property <bool> selected;
+    callback clicked();
+    background: root.game.has-cover ? T.bg : root.game.accent;
+
+    if root.game.has-cover: Image {
+        width: 100%;
+        height: 100%;
+        source: root.game.cover;
+        image-fit: fill;
+    }
+    if !root.game.has-cover: VerticalLayout {
+        padding: T.fs;
+        alignment: center;
+        spacing: T.fs * 0.5;
+        Text {
+            text: root.game.initials;
+            color: #ffffffd0;
+            font-size: root.height * 0.16;
+            font-weight: 800;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.game.title;
+            color: #ffffffb0;
+            font-size: T.fs;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+    }
+    // Dim what is not focused.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000;
+        opacity: root.selected ? 0 : 0.45;
+    }
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-width: root.selected ? 3px : 1px;
+        border-color: root.selected ? T.accent : T.line;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 // Dimmed screen with a framed box in the middle.
 component Modal inherits Rectangle {
     in property <string> title;
@@ -159,8 +234,14 @@ export component AppWindow inherits Window {
     preferred-height: 900px;
     min-width: 960px;
     min-height: 600px;
-    default-font-family: "Cascadia Mono";
+    default-font-family: root.layout == 1 ? "Segoe UI" : "Cascadia Mono";
     forward-focus: keys;
+
+    // 0 = terminal (list + details), 1 = console (carousel + background art).
+    in property <int> layout: 0;
+    // Console layout: focused game's background, pre-dimmed by Rust.
+    in property <image> hero;
+    in property <bool> has-hero;
 
     in property <[GameTile]> games;
     in-out property <int> selected: 0;
@@ -234,6 +315,19 @@ export component AppWindow inherits Window {
     out property <length> cover-w: min(root.info-w - T.ch * 6, (root.body-h * 0.58) * 2 / 3);
     out property <length> cover-h: root.cover-w * 1.5;
     changed cover-w => {
+        root.layout-changed();
+    }
+
+    // Console layout carousel geometry; exposed so Rust decodes covers 1:1.
+    property <length> tile-h: root.height * 0.46;
+    property <length> tile-w: root.tile-h * 2 / 3;
+    property <length> gap: T.fs * 1.3;
+    out property <length> tile-width: root.tile-w;
+    out property <length> tile-height: root.tile-h;
+    changed tile-w => {
+        root.layout-changed();
+    }
+    changed layout => {
         root.layout-changed();
     }
 
@@ -400,6 +494,119 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ------------------------------------------------------- console layout
+
+    if root.layout == 1 && root.has-hero && !root.on-add: Image {
+        width: 100%;
+        height: 100%;
+        source: root.hero;
+        image-fit: fill;
+    }
+
+    if root.layout == 1: VerticalLayout {
+        x: root.pad * 2;
+        y: root.height * 0.13;
+        width: root.width - root.pad * 4;
+        alignment: start;
+        spacing: T.fs * 0.7;
+        Text {
+            text: root.on-add ? "Add game or app" : root.current.title;
+            color: T.bright;
+            font-size: min(60px, root.height * 0.06);
+            font-weight: 800;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: T.ch;
+            Rectangle {
+                border-width: 1px;
+                border-color: T.dim;
+                HorizontalLayout {
+                    padding-left: T.ch;
+                    padding-right: T.ch;
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    Text {
+                        text: root.on-add ? "exe · lnk · url · bat · cmd" : root.current.source;
+                        color: T.fg;
+                        font-size: T.fs * 0.85;
+                        font-weight: 600;
+                    }
+                }
+            }
+            if !root.on-add: Text {
+                text: "played " + root.current.played;
+                color: T.dim;
+                font-size: T.fs * 0.85;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    if root.layout == 1: Rectangle {
+        x: root.pad * 2 - root.selected * (root.tile-w + root.gap);
+        y: root.height * 0.33;
+        width: root.width;
+        height: root.tile-h + T.fs * 2;
+        animate x { duration: 200ms; easing: ease-out; }
+
+        for g[i] in root.games: Tile {
+            x: i * (root.tile-w + root.gap);
+            y: i == root.selected ? 0px : T.fs * 1.2;
+            width: root.tile-w;
+            height: root.tile-h;
+            game: g;
+            selected: i == root.selected;
+            animate y { duration: 150ms; easing: ease-out; }
+            clicked => {
+                if (root.selected == i) {
+                    root.activate();
+                } else {
+                    root.selected = i;
+                }
+            }
+        }
+
+        // "+" tile, always last.
+        Rectangle {
+            x: root.games.length * (root.tile-w + root.gap);
+            y: root.on-add ? 0px : T.fs * 1.2;
+            width: root.tile-w;
+            height: root.tile-h;
+            background: root.on-add ? #161616 : T.bg;
+            border-width: root.on-add ? 3px : 1px;
+            border-color: root.on-add ? T.accent : T.line;
+            animate y { duration: 150ms; easing: ease-out; }
+            VerticalLayout {
+                alignment: center;
+                spacing: T.fs * 0.6;
+                Text {
+                    text: "+";
+                    color: root.on-add ? T.accent : T.dim;
+                    font-size: root.tile-h * 0.2;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Add game or app";
+                    color: T.dim;
+                    font-size: T.fs;
+                    horizontal-alignment: center;
+                }
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    if (root.on-add) {
+                        root.activate();
+                    } else {
+                        root.selected = root.games.length;
+                    }
+                }
+            }
+        }
+    }
+
     // --------------------------------------------------------------- top bar
 
     HorizontalLayout {
@@ -466,7 +673,7 @@ export component AppWindow inherits Window {
 
     // --------------------------------------------------------------- library
 
-    lib := Frame {
+    if root.layout == 0: lib := Frame {
         x: root.pad;
         y: root.body-y;
         width: root.list-w;
@@ -597,7 +804,7 @@ export component AppWindow inherits Window {
 
     // ----------------------------------------------------------------- info
 
-    info := Frame {
+    if root.layout == 0: info := Frame {
         x: root.info-x;
         y: root.body-y;
         width: root.info-w;
@@ -742,10 +949,16 @@ export component AppWindow inherits Window {
             property <bool> sel: i == root.menu-index;
             property <bool> toggle: row.value == "On" || row.value == "Off";
             background: self.sel ? T.accent : transparent;
+            if root.layout == 1 && menu-row.toggle: Check {
+                x: T.fs;
+                y: (menu-row.height - self.height) / 2;
+                on: row.on;
+                tone: menu-row.sel ? T.bg : T.fg;
+            }
             Text {
-                x: T.ch * 2;
+                x: root.layout == 1 ? T.fs * 2.6 : T.ch * 2;
                 height: 100%;
-                text: (menu-row.toggle ? (row.on ? "[x] " : "[ ] ") : "    ") + row.label;
+                text: root.layout == 1 ? row.label : (menu-row.toggle ? (row.on ? "[x] " : "[ ] ") : "    ") + row.label;
                 color: menu-row.sel ? T.bg : (row.dim ? T.dim : T.fg);
                 font-size: T.fs;
                 font-weight: menu-row.sel ? 700 : 400;
@@ -807,11 +1020,17 @@ export component AppWindow inherits Window {
                 visible: i >= apps.top && i < apps.top + apps.fit;
                 property <bool> sel: i == root.app-index;
                 background: self.sel ? T.accent : transparent;
+                if root.layout == 1: Check {
+                    x: T.fs;
+                    y: (app-row.height - self.height) / 2;
+                    on: row.on;
+                    tone: app-row.sel ? T.bg : T.fg;
+                }
                 Text {
-                    x: T.ch * 2;
+                    x: root.layout == 1 ? T.fs * 2.6 : T.ch * 2;
                     width: T.ch * 40;
                     height: 100%;
-                    text: (row.on ? "[x] " : "[ ] ") + row.name;
+                    text: root.layout == 1 ? row.name : (row.on ? "[x] " : "[ ] ") + row.name;
                     color: app-row.sel ? T.bg : T.fg;
                     font-size: T.fs;
                     font-weight: app-row.sel ? 700 : 400;

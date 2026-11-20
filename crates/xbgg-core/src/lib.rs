@@ -164,6 +164,21 @@ impl Library {
         Ok(())
     }
 
+    pub fn ui(&self) -> &store::UiSettings {
+        &self.config.ui
+    }
+
+    /// Switches between the terminal and console layouts and saves it.
+    pub fn set_console_layout(&mut self, console: bool) -> Result<()> {
+        let before = self.config.ui.clone();
+        self.config.ui.layout = if console { store::LAYOUT_CONSOLE } else { store::LAYOUT_TERMINAL }.into();
+        if let Err(e) = self.save() {
+            self.config.ui = before;
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// Re-sorts after launches so recently played entries come first.
     pub fn resort(&mut self) {
         sort_games(&mut self.games);
@@ -236,6 +251,23 @@ mod tests {
         lib.remove(idx).unwrap();
         let reloaded = Library::load_from(Some(cfg.clone()));
         assert_eq!(reloaded.games().len(), before);
+        let _ = std::fs::remove_dir_all(cfg.parent().unwrap());
+    }
+
+    #[test]
+    fn layout_setting_persists_and_tolerates_unknown_values() {
+        let cfg = temp_config("layout");
+        let mut lib = Library::load_from(Some(cfg.clone()));
+        assert!(!lib.ui().is_console(), "terminal is the default");
+        lib.set_console_layout(true).unwrap();
+        assert!(Library::load_from(Some(cfg.clone())).ui().is_console());
+
+        // A value written by some future version must not break the file.
+        let text = std::fs::read_to_string(&cfg).unwrap().replace("\"console\"", "\"hologram\"");
+        std::fs::write(&cfg, text).unwrap();
+        let lib = Library::load_from(Some(cfg.clone()));
+        assert!(lib.warnings.is_empty(), "{:?}", lib.warnings);
+        assert!(!lib.ui().is_console());
         let _ = std::fs::remove_dir_all(cfg.parent().unwrap());
     }
 

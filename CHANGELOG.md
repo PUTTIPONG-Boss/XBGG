@@ -4,6 +4,19 @@ All notable changes to XBGG are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-20
+
+### Added
+- **Two layouts**, switchable in *Menu → layout* (saved):
+  - **terminal** (default): library list + details pane, monospace.
+  - **console**: the cover carousel with the focused game's background art,
+    now with square tiles, a bordered source label and no gradients.
+- Square checkboxes in the menu and app list in the console layout.
+
+### Changed
+- Everything is square: no rounded corners or pill shapes anywhere, and the
+  controller keys are square blocks in both layouts.
+
 ## [0.3.0] - 2026-11-20
 
 A new, terminal-style interface.
@@ -89,6 +102,7 @@ First public release: the game library shell.
 
 See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for measurements.
 
+[0.4.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.4.0
 [0.3.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.2.0
 [0.1.1]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.1.1

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Switches the foreground between XBGG and a stand-in game many times and
   checks that threads/handles do not grow (regression test for leaked

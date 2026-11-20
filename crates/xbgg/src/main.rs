@@ -35,7 +35,11 @@ struct App {
     status_timer: Timer,
     last_launch: Cell<Option<Instant>>,
     picking_file: Cell<bool>,
+    /// Terminal layout: the focused cover.
     cover: art::CoverLoader,
+    /// Console layout: every cover, and the focused background art.
+    covers: RefCell<art::CoverCache>,
+    hero: art::HeroLoader,
     layout_timer: Timer,
     /// Filled by the background update check.
     pending_update: Arc<Mutex<Option<update::Release>>>,
@@ -45,26 +49,52 @@ struct App {
 }
 
 impl App {
-    /// Shows the cover of the entry at `index`, at the exact on-screen size.
-    fn load_cover(&self, ui: &AppWindow, index: i32) {
-        let path = usize::try_from(index)
-            .ok()
-            .and_then(|i| self.library.borrow().games().get(i).and_then(|g| g.cover.clone()));
+    fn console(&self) -> bool {
+        self.library.borrow().ui().is_console()
+    }
+
+    /// Loads the art for the focused entry: its cover (terminal layout) or
+    /// its background (console layout), at the exact on-screen size.
+    fn load_art(&self, ui: &AppWindow, index: i32) {
+        let lib = self.library.borrow();
+        let game = usize::try_from(index).ok().and_then(|i| lib.games().get(i));
         let scale = ui.window().scale_factor();
         let px = |logical: f32| (logical * scale).round().max(0.0) as u32;
-        // The image sits inside a 1px border.
-        let border = px(1.0) * 2;
-        let (w, h) = (px(ui.get_cover_w()).saturating_sub(border), px(ui.get_cover_h()).saturating_sub(border));
-        self.cover.request(ui, path, w, h);
+        if lib.ui().is_console() {
+            let path = game.and_then(|g| g.hero.clone());
+            drop(lib);
+            let size = ui.window().size();
+            self.hero.request(ui, path, size.width, size.height);
+        } else {
+            let path = game.and_then(|g| g.cover.clone());
+            drop(lib);
+            // The image sits inside a 1px border.
+            let border = px(1.0) * 2;
+            let (w, h) = (px(ui.get_cover_w()).saturating_sub(border), px(ui.get_cover_h()).saturating_sub(border));
+            self.cover.request(ui, path, w, h);
+        }
     }
 
     /// Pushes the library into the UI, optionally focusing the entry with `select_id`.
     fn sync(&self, ui: &AppWindow, select_id: Option<&str>) {
         let lib = self.library.borrow();
         let now = xbgg_core::now_unix();
-        let tiles: Vec<GameTile> = lib.games().iter().map(|g| to_tile(g, now)).collect();
+        let mut covers = self.covers.borrow_mut();
+        if lib.ui().is_console() {
+            let scale = ui.window().scale_factor();
+            let px = |logical: f32| (logical * scale).round().max(0.0) as u32;
+            let paths: Vec<_> = lib.games().iter().filter_map(|g| g.cover.clone()).collect();
+            covers.ensure(&paths, px(ui.get_tile_width()), px(ui.get_tile_height()));
+        } else {
+            covers.clear();
+        }
+        let tiles: Vec<GameTile> = lib
+            .games()
+            .iter()
+            .map(|g| to_tile(g, now, g.cover.as_deref().and_then(|p| covers.get(p))))
+            .collect();
+        drop(covers);
         self.model.set_vec(tiles);
-        self.cover.reset();
         let count = lib.games().len() as i32;
         ui.set_scanned_count(count);
         let selected = select_id
@@ -73,7 +103,20 @@ impl App {
             .unwrap_or_else(|| ui.get_selected().clamp(0, count));
         drop(lib);
         ui.set_selected(selected);
-        self.load_cover(ui, selected);
+        self.load_art(ui, selected);
+    }
+
+    /// Switches between the terminal and console layouts.
+    fn set_layout(&self, ui: &AppWindow, console: bool) {
+        if let Err(e) = self.library.borrow_mut().set_console_layout(console) {
+            self.set_status(ui, format!("Couldn't save settings: {e:#}"));
+            return;
+        }
+        ui.set_layout(if console { 1 } else { 0 });
+        // Free the other layout's art.
+        self.cover.reset(ui);
+        self.hero.reset(ui);
+        self.sync(ui, None);
     }
 
     fn set_status(&self, ui: &AppWindow, text: impl Into<slint::SharedString>) {
@@ -212,11 +255,14 @@ fn main() -> anyhow::Result<()> {
         last_launch: Cell::new(None),
         picking_file: Cell::new(false),
         cover: art::CoverLoader::default(),
+        covers: RefCell::default(),
+        hero: art::HeroLoader::default(),
         layout_timer: Timer::default(),
         pending_update: Arc::default(),
         boost: RefCell::default(),
         app_rows: RefCell::default(),
     });
+    ui.set_layout(if app.console() { 1 } else { 0 });
     app.sync(&ui, None);
     ui.set_boost_enabled(app.library.borrow().boost().enabled);
     let had_warning = report_warnings(&app, &ui);
@@ -287,6 +333,8 @@ fn refresh_menu(app: &App, ui: &AppWindow) {
     if active {
         rows.push(row("end", "end boost now", "active".into(), true, false));
     }
+    let layout = if app.console() { "console" } else { "terminal" };
+    rows.push(row("layout", "layout", layout.into(), false, false));
     rows.push(row("rescan", "rescan library", "".into(), false, false));
     rows.push(row("exit", "exit xbgg", "".into(), false, false));
 
@@ -520,7 +568,7 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
         let (app, weak) = (app.clone(), ui.as_weak());
         ui.on_focused(move |index| {
             if let Some(ui) = weak.upgrade() {
-                app.load_cover(&ui, index);
+                app.load_art(&ui, index);
             }
         });
     }
@@ -595,6 +643,10 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
                 "update" => {
                     ui.set_panel(0);
                     ui.set_dialog(3);
+                }
+                "layout" => {
+                    let console = !app.console();
+                    app.set_layout(&ui, console);
                 }
                 "rescan" => {
                     ui.set_panel(0);
@@ -721,7 +773,7 @@ fn start_update_check(app: &App, ui: &AppWindow) {
     });
 }
 
-fn to_tile(g: &Game, now: u64) -> GameTile {
+fn to_tile(g: &Game, now: u64, cover: Option<slint::Image>) -> GameTile {
     let (source, detail) = match g.source {
         Source::Steam => ("steam", format!("app {}", g.id.trim_start_matches("steam:"))),
         Source::Epic => ("epic", g.id.trim_start_matches("epic:").to_string()),
@@ -751,7 +803,41 @@ fn to_tile(g: &Game, now: u64) -> GameTile {
         played: relative_time(g.last_played, now).into(),
         detail: detail.into(),
         path: path.into(),
+        has_cover: cover.is_some(),
+        cover: cover.unwrap_or_default(),
+        accent: accent_for(&g.title),
+        initials: initials(&g.title).into(),
     }
+}
+
+/// A stable, muted, flat colour from the title, for tiles without a cover.
+fn accent_for(title: &str) -> slint::Color {
+    let hash = title.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    let hue = (hash % 360) as f32;
+    let (s, l) = (0.35f32, 0.28f32);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match hue as u32 / 60 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let to = |v: f32| ((v + m) * 255.0).round() as u8;
+    slint::Color::from_rgb_u8(to(r), to(g), to(b))
+}
+
+fn initials(title: &str) -> String {
+    let letters: String = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+    if letters.is_empty() { "?".into() } else { letters }
 }
 
 /// "just now", "12m ago", "3h ago", "5d ago", "6w ago", "2y ago", "-".

@@ -21,9 +21,10 @@ CPU while you play.
 
 - **One library for every store** — finds installed games from Steam (all
   library folders, with local cover art), Epic Games and GOG.
-- **Terminal-style interface** — a keyboard/controller-driven list with a
-  details pane, framed panels and one monospace font. No animations, no
-  background art: it costs almost nothing to draw.
+- **Two layouts** — *terminal* (a list with a details pane, one monospace
+  font, nearly free to draw) or *console* (a cover carousel over the game's
+  background art). Switch any time in *Menu → layout*. Both are square-edged:
+  no rounded corners, pills or gradients. See [Layouts](#layouts).
 - **Add anything** — any `.exe`, shortcut (`.lnk`, `.url`) or script (`.bat`,
   `.cmd`) that the scanners don't find.
 - **Controller first** — Xbox-style controllers, keyboard and mouse all work.
@@ -37,6 +38,16 @@ CPU while you play.
   verified with SHA-256 and installed only after you confirm.
 - **Recently played first**, hide what you don't want, nothing on disk is ever
   deleted.
+
+## Layouts
+
+| terminal (default) | console |
+|---|---|
+| ![terminal layout](docs/screenshot.jpg) | ![console layout](docs/console.jpg) |
+| List + details, monospace, ~14 MB RAM | Cover carousel + background art, ~26 MB RAM |
+
+Switch in *Menu → layout*; the choice is saved. Menus, dialogs and the key bar
+are the same in both.
 
 ## Boost
 
@@ -75,7 +86,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 1920×1080, 7-game library, release build. Full method and raw results:
 [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
-| Metric | XBGG v0.3.0 |
+| Metric | XBGG v0.4.0 (terminal layout) |
 |---|---|
 | GPU memory (VRAM) | **0 MB** — UI is rendered on the CPU; a laptop's discrete GPU is never woken |
 | Private memory | ~14 MB |

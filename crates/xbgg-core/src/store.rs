@@ -26,6 +26,31 @@ pub struct Config {
     /// Unix seconds of the last launch from XBGG, by game id.
     pub last_played: BTreeMap<String, u64>,
     pub boost: crate::boost::BoostConfig,
+    pub ui: UiSettings,
+}
+
+/// Interface preferences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiSettings {
+    /// "terminal" or "console". Kept as text so an unknown value from a newer
+    /// version falls back to the default instead of failing the whole file.
+    pub layout: String,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        UiSettings { layout: LAYOUT_TERMINAL.into() }
+    }
+}
+
+pub const LAYOUT_TERMINAL: &str = "terminal";
+pub const LAYOUT_CONSOLE: &str = "console";
+
+impl UiSettings {
+    pub fn is_console(&self) -> bool {
+        self.layout == LAYOUT_CONSOLE
+    }
 }
 
 pub fn default_path() -> Option<PathBuf> {
