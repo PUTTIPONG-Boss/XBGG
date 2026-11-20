@@ -4,6 +4,16 @@ All notable changes to XBGG are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-20
+
+### Fixed
+- **Start menu and search stopped working after leaving shell mode** when XBGG
+  itself ran inside a job object (some launchers start programs that way):
+  the desktop XBGG restored was ended together with XBGG. Explorer is now
+  started outside XBGG's job, so the desktop always outlives XBGG.
+- Patch releases no longer ask to update the admin helper (only a new minor
+  version does).
+
 ## [0.5.0] - 2026-11-20
 
 ### Added
@@ -128,6 +138,7 @@ First public release: the game library shell.
 
 See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for measurements.
 
+[0.5.1]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.5.1
 [0.5.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.5.0
 [0.4.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.4.0
 [0.3.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.3.0

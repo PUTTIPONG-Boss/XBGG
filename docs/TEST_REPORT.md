@@ -3,6 +3,7 @@
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
 `x86_64-pc-windows-gnu`.
 
+- **v0.5.1**: after the shell-mode test the user's Start menu and search stopped working — explorer.exe was gone. Cause: the test tooling runs inside a job object that ends all child processes; the Explorer that XBGG restored was XBGG's child and ended with it. Fix: Explorer is started with `CREATE_BREAKAWAY_FROM_JOB` (normal start as fallback). Verified: XBGG hid and restored the desktop inside the job, and that Explorer (with Start menu and search hosts) was still running after the job closed.
 - **v0.5.0** (shell mode, Windows services): see [v0.5.0](#v050--shell-mode-and-windows-services) below.
 - **v0.4.0** (layout switch, square everything): see [v0.4.0](#v040--two-layouts) below.
 - **v0.3.0** (terminal UI): see [v0.3.0](#v030--terminal-ui) below.

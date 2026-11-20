@@ -115,6 +115,23 @@ fn explorer_exe() -> PathBuf {
     windir.join("explorer.exe")
 }
 
+/// Starts the desktop. XBGG may itself run inside a job object (some
+/// launchers do that) that ends every child when it closes; the desktop must
+/// outlive XBGG, so it breaks away from the job when allowed.
+fn spawn_explorer() -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let mut cmd = std::process::Command::new(explorer_exe());
+    match cmd.creation_flags(CREATE_BREAKAWAY_FROM_JOB).spawn() {
+        Ok(_) => Ok(()),
+        // The job forbids breaking away: start it normally.
+        Err(_) => {
+            std::process::Command::new(explorer_exe()).spawn().context("starting explorer.exe")?;
+            Ok(())
+        }
+    }
+}
+
 fn responsive() -> bool {
     let tray = taskbar();
     !tray.is_null() && unsafe { IsHungAppWindow(tray) } == 0
@@ -155,7 +172,7 @@ fn end_all_explorers() {
 pub fn show_desktop(timeout: Duration) -> Result<bool> {
     let start = Instant::now();
     if !desktop_running() {
-        std::process::Command::new(explorer_exe()).spawn().context("starting explorer.exe")?;
+        spawn_explorer()?;
     }
     if wait_responsive(start + timeout / 2) {
         return Ok(true);
@@ -163,7 +180,7 @@ pub fn show_desktop(timeout: Duration) -> Result<bool> {
     end_all_explorers();
     std::thread::sleep(Duration::from_millis(500));
     if !desktop_running() {
-        std::process::Command::new(explorer_exe()).spawn().context("starting explorer.exe")?;
+        spawn_explorer()?;
     }
     Ok(wait_responsive(start + timeout))
 }

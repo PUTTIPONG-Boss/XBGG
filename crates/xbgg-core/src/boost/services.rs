@@ -290,7 +290,11 @@ pub fn helper_matches(current: &str) -> bool {
     let Ok(out) = Command::new(helper_exe()).arg("--version").stdin(Stdio::null()).creation_flags(CREATE_NO_WINDOW).output() else {
         return false;
     };
-    String::from_utf8_lossy(&out.stdout).trim().ends_with(current)
+    // Same major.minor is enough: patch releases don't change the helper, so
+    // they shouldn't ask for administrator rights again.
+    let minor = |v: &str| v.rsplit(' ').next().unwrap_or("").splitn(3, '.').take(2).collect::<Vec<_>>().join(".");
+    let installed = String::from_utf8_lossy(&out.stdout);
+    !minor(installed.trim()).is_empty() && minor(installed.trim()) == minor(current)
 }
 
 fn xml_escape(s: &str) -> String {
