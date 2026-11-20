@@ -4,6 +4,8 @@ pub mod boost;
 pub mod launch;
 pub mod model;
 pub mod scan;
+#[cfg(windows)]
+pub mod shell;
 pub mod store;
 pub mod vdf;
 
@@ -166,6 +168,17 @@ impl Library {
 
     pub fn ui(&self) -> &store::UiSettings {
         &self.config.ui
+    }
+
+    /// Turns "hide the desktop while XBGG is open" on or off and saves it.
+    pub fn set_hide_desktop(&mut self, on: bool) -> Result<()> {
+        let before = self.config.ui.hide_desktop;
+        self.config.ui.hide_desktop = on;
+        if let Err(e) = self.save() {
+            self.config.ui.hide_desktop = before;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Switches between the terminal and console layouts and saves it.

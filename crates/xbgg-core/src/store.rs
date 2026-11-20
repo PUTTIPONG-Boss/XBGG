@@ -36,11 +36,13 @@ pub struct UiSettings {
     /// "terminal" or "console". Kept as text so an unknown value from a newer
     /// version falls back to the default instead of failing the whole file.
     pub layout: String,
+    /// Close the Windows desktop/taskbar while XBGG is open ("shell mode").
+    pub hide_desktop: bool,
 }
 
 impl Default for UiSettings {
     fn default() -> Self {
-        UiSettings { layout: LAYOUT_TERMINAL.into() }
+        UiSettings { layout: LAYOUT_TERMINAL.into(), hide_desktop: false }
     }
 }
 

@@ -26,6 +26,10 @@ pub struct ApplyReport {
     pub power_already_best: bool,
     /// Processes we were not allowed to touch (e.g. elevated).
     pub skipped: Vec<String>,
+    /// Windows services the helper reports as paused.
+    pub services_paused: Vec<String>,
+    /// Pausing services was enabled but the one-time setup is missing.
+    pub services_need_setup: bool,
 }
 
 /// What ending a boost did.
@@ -36,6 +40,7 @@ pub struct RestoreReport {
     pub gone: usize,
     pub power_restored: bool,
     pub priority_restored: usize,
+    pub services_resumed: bool,
 }
 
 pub struct Session {
@@ -73,11 +78,35 @@ impl Session {
             }
         }
 
+        if cfg.pause_services {
+            if super::services::helper_installed() {
+                session.journal.services_paused = true;
+                session.persist();
+                if let Err(e) = super::services::request(true) {
+                    eprintln!("xbgg: {e:#}");
+                }
+            } else {
+                report.services_need_setup = true;
+            }
+        }
+
         if cfg.freeze_apps {
             session.freeze(cfg, protect_dir, &mut report);
             // Released pages become "available" as Windows moves them to the
             // standby list; give it a moment before measuring.
             std::thread::sleep(Duration::from_millis(1500));
+        }
+        if session.journal.services_paused {
+            // The helper runs as a separate task; give it a moment to report.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                let state = super::services::read_state();
+                if state.at >= session.journal.started_at {
+                    report.services_paused = state.names();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
         }
         report.ram_after = sys::available_ram();
         (session, report)
@@ -193,6 +222,9 @@ fn undo(j: &Journal) -> RestoreReport {
                 report.priority_restored += 1;
             }
         }
+    }
+    if j.services_paused {
+        report.services_resumed = super::services::request(false).is_ok();
     }
     if let Some(before) = j.power_overlay_before.as_deref().and_then(|s| u128::from_str_radix(s, 16).ok()) {
         // Only undo our own change: if the user picked another mode
@@ -380,6 +412,7 @@ mod tests {
             freeze_list: vec!["ping.exe".into()],
             power_mode: false,
             game_priority: false,
+            pause_services: false,
         };
         let (session, report) = Session::start(&cfg, None, journal_path.clone());
         assert!(report.frozen_processes >= 1, "{report:?}");

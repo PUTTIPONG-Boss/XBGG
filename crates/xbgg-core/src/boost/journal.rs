@@ -34,11 +34,13 @@ pub struct Journal {
     /// Power mode before boosting, as a hex GUID number.
     pub power_overlay_before: Option<String>,
     pub priority: Vec<PriorityChange>,
+    /// The services helper was asked to pause; ask it to resume on undo.
+    pub services_paused: bool,
 }
 
 impl Journal {
     pub fn is_empty(&self) -> bool {
-        self.frozen.is_empty() && self.power_overlay_before.is_none() && self.priority.is_empty()
+        self.frozen.is_empty() && self.power_overlay_before.is_none() && self.priority.is_empty() && !self.services_paused
     }
 }
 
@@ -79,6 +81,7 @@ mod tests {
             frozen: vec![ProcRef { pid: 1, created: 2, name: "a.exe".into() }],
             power_overlay_before: Some("0".into()),
             priority: vec![],
+            services_paused: true,
         };
         save(&path, &j).unwrap();
         assert_eq!(load(&path), Some(j));

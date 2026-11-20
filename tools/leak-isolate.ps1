@@ -11,14 +11,15 @@ if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\target\release\xbgg.exe' }
 $p = Start-Process (Resolve-Path $Exe) -ArgumentList '--no-update' -PassThru
 $h = Wait-MainWindow $p
 Start-Sleep -Seconds 3
+$layoutRow = if (Test-Path "$env:ProgramFiles\XBGG\xbgg-helper.exe") { 9 } else { 8 }
 $samples = @()
 for ($i = 1; $i -le $Rounds; $i++) {
     switch ($Mode) {
         'nav' { Send-Key $h Down 1 90; Send-Key $h Up 1 90 }        # two cover loads
         'menu' { Send-Key $h F2 1 50; Send-Key $h Down 2 30; Send-Key $h Enter 1 120; Send-Key $h Esc 2 60 }
         'rescan' { Send-Key $h F5 1 150 }
-        # Menu row 5 is "layout" (no update pending, no boost running).
-        'layout' { Send-Key $h F2 1 80; Send-Key $h Down 5 30; Send-Key $h Enter 1 600; Send-Key $h Esc 1 300 }
+        # Menu rows: ... services 5, [remove helper 6], autostart, desktop, layout.
+        'layout' { Send-Key $h F2 1 80; Send-Key $h Down $layoutRow 30; Send-Key $h Enter 1 600; Send-Key $h Esc 1 300 }
     }
     if ($i % [math]::Max(1, [int]($Rounds / 10)) -eq 0) {
         Start-Sleep -Milliseconds 400

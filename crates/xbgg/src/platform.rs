@@ -104,6 +104,54 @@ pub fn focus_existing_instance() {
 #[cfg(not(windows))]
 pub fn focus_existing_instance() {}
 
+/// Runs this executable elevated (UAC prompt) with `args` and waits for it.
+/// Returns its exit code; `Err` if the user declined the prompt.
+#[cfg(windows)]
+pub fn run_elevated(args: &str) -> anyhow::Result<u32> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let exe = std::env::current_exe()?;
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (verb, file, params) = (wide("runas"), wide(&exe.display().to_string()), wide(args));
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = file.as_ptr();
+    info.lpParameters = params.as_ptr();
+    info.nShow = SW_HIDE;
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() == Some(1223) {
+            anyhow::bail!("administrator permission was declined");
+        }
+        return Err(e.into());
+    }
+    let mut code = 1u32;
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+    }
+    Ok(code)
+}
+
+/// Brings this process' main window to the front.
+#[cfg(windows)]
+pub fn focus_self() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow};
+    let title: Vec<u16> = "XBGG".encode_utf16().chain([0]).collect();
+    unsafe {
+        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+        if !hwnd.is_null() {
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
+
 /// Release builds use the GUI subsystem; attach to the launching terminal so
 /// command-line modes (`--list`, `--version`, ...) can print.
 #[cfg(windows)]

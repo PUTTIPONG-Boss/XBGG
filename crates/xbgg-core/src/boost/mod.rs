@@ -9,6 +9,8 @@ pub mod apps;
 pub mod config;
 pub mod journal;
 #[cfg(windows)]
+pub mod services;
+#[cfg(windows)]
 pub mod session;
 #[cfg(windows)]
 pub mod sys;

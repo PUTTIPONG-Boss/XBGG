@@ -15,6 +15,9 @@ pub struct BoostConfig {
     pub power_mode: bool,
     /// Raise the game's process priority to "High".
     pub game_priority: bool,
+    /// Pause Windows Search, SysMain, Telemetry and Delivery Optimization
+    /// (needs the one-time admin setup, see `boost::services`).
+    pub pause_services: bool,
 }
 
 impl Default for BoostConfig {
@@ -25,6 +28,7 @@ impl Default for BoostConfig {
             freeze_list: DEFAULT_FREEZE.iter().map(|s| s.to_string()).collect(),
             power_mode: true,
             game_priority: false,
+            pause_services: false,
         }
     }
 }

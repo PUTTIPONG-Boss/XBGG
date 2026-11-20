@@ -17,6 +17,8 @@ param(
     [string]$GameTitle = "Deadlock",
     [int]$MemoryMB = 1500,
     [int]$PlaySeconds = 30,
+    # Also pause Windows services (needs the admin helper installed).
+    [switch]$Services,
     [string]$ShotDir = ""
 )
 $ErrorActionPreference = 'Stop'
@@ -39,6 +41,10 @@ function Is-Frozen([int]$procId) {
     $running = @($t | Where-Object { $_.ThreadState -in 'Running', 'Ready' }).Count
     $t.Count -gt 0 -and $running -eq 0 -and $susp -ge [math]::Ceiling($t.Count * 0.9)
 }
+$svcNames = 'WSearch', 'SysMain', 'DiagTrack'
+function Svc-State { ($svcNames | ForEach-Object { $s = Get-Service $_; "$($s.Name)=$($s.Status)/$($s.StartType)" }) -join ', ' }
+function Svc-AllStopped { @($svcNames | Where-Object { (Get-Service $_).Status -ne 'Stopped' }).Count -eq 0 }
+function Wait-Svc([string]$want, [int]$sec = 30) { $d = (Get-Date).AddSeconds($sec); while ((Get-Date) -lt $d) { if (@($svcNames | Where-Object { (Get-Service $_).Status -ne $want }).Count -eq 0) { return $true }; Start-Sleep -Milliseconds 500 }; $false }
 function Avail-MB { [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1KB) }
 function Get-XbggList {
     $tmp = [IO.Path]::GetTempFileName()
@@ -76,7 +82,7 @@ $hog = $null; $x = $null; $game = $null; $winver = $null
 try {
     # --- configure Boost for the test
     $cfg = Get-Content $config -Raw | ConvertFrom-Json
-    $boost = [pscustomobject]@{ enabled = $true; freeze_apps = $true; freeze_list = @('memhog.exe', 'wallpaper32.exe'); power_mode = $true; game_priority = $true }
+    $boost = [pscustomobject]@{ enabled = $true; freeze_apps = $true; freeze_list = @('memhog.exe', 'wallpaper32.exe'); power_mode = $true; game_priority = $true; pause_services = [bool]$Services }
     $cfg | Add-Member -NotePropertyName boost -NotePropertyValue $boost -Force
     $cfg.custom = @([pscustomobject]@{ id = 'custom:boosttest'; title = 'zz Boost Test Winver'; path = "$env:WINDIR\System32\winver.exe"; args = @() })
     [IO.File]::WriteAllText($config, ($cfg | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding $false))
@@ -87,6 +93,8 @@ try {
     Start-Sleep -Seconds 2
     $hogWsBefore = [math]::Round((Get-Process -Id $hog.Id).WorkingSet64 / 1MB)
     $wp = Get-Process wallpaper32 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $svcBefore = Svc-State
+    if ($Services) { Log "services before: $svcBefore" }
     $availBefore = Avail-MB
     Log "memhog holds $hogWsBefore MB; available RAM $availBefore MB; wallpaper32 running: $([bool]$wp)"
 
@@ -113,6 +121,10 @@ try {
     $prio = ($all | ForEach-Object { "pid $($_.Id) started $($_.StartTime.ToString('HH:mm:ss')): $($_.PriorityClass)" }) -join '; '
     Check 'game at High priority' (@($all | Where-Object { $_.PriorityClass -ne 'High' }).Count -eq 0) $prio
     Check 'game itself not frozen' (-not (Is-Frozen $game.Id))
+    if ($Services) {
+        $ok = Wait-Svc 'Stopped' 20
+        Check 'services paused (stopped + disabled) while playing' ($ok -and @($svcNames | Where-Object { (Get-Service $_).StartType -ne 'Disabled' }).Count -eq 0) (Svc-State)
+    }
     Check 'journal written' (Test-Path $journal)
     $guards = @(Get-CimInstance Win32_Process -Filter "Name='xbgg.exe'" | Where-Object { $_.CommandLine -match '--boost-guard' })
     Check 'guard process running' ($guards.Count -eq 1) "$($guards.Count) guard(s)"
@@ -137,6 +149,10 @@ try {
     Start-Sleep -Seconds 1
     Check 'journal removed after game exit' (-not (Test-Path $journal))
     Check 'apps restored quickly after the game closed' ($restoreSec -le 8) "$restoreSec s"
+    if ($Services) {
+        $null = Wait-Svc 'Running' 30
+        Check 'services resumed with their original start types' ((Svc-State) -eq $svcBefore) (Svc-State)
+    }
     Check 'memhog resumed' (-not (Is-Frozen $hog.Id))
     if ($wp) { Check 'wallpaper32 resumed' (-not (Is-Frozen $wp.Id)) }
     if ($ShotDir) { Start-Sleep -Seconds 2; Save-WindowShot $h (Join-Path $ShotDir 'boost-after-game.png') }
@@ -162,6 +178,10 @@ try {
     while ((Test-Path $journal) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
     Start-Sleep -Seconds 1
     Check 'crash test: guard restored memhog' (-not (Is-Frozen $hog.Id))
+    if ($Services) {
+        $null = Wait-Svc 'Running' 30
+        Check 'crash test: guard resumed the services' ((Svc-State) -eq $svcBefore) (Svc-State)
+    }
     if ($wp) { Check 'crash test: guard restored wallpaper32' (-not (Is-Frozen $wp.Id)) }
     Check 'crash test: journal removed' (-not (Test-Path $journal))
     Start-Sleep -Seconds 2

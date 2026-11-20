@@ -105,7 +105,9 @@ impl Controller {
         }
     }
 
-    fn ensure_guard(&mut self) {
+    /// Starts the guard process if it isn't running. It restores a boost and
+    /// the desktop if XBGG dies.
+    pub fn ensure_guard(&mut self) {
         if let Some(g) = &mut self.guard {
             if matches!(g.try_wait(), Ok(None)) {
                 return;
@@ -258,10 +260,13 @@ pub fn guard(owner: u32) {
     if let Some(h) = Process::open(owner, ACCESS_WAIT) {
         h.wait(None);
     }
-    let Some(path) = journal::default_path() else { return };
-    if journal::load(&path).is_some_and(|j| j.owner_pid == owner) {
-        restore_leftover(&path);
+    if let Some(path) = journal::default_path() {
+        if journal::load(&path).is_some_and(|j| j.owner_pid == owner) {
+            restore_leftover(&path);
+        }
     }
+    // The desktop, if that XBGG had hidden it.
+    xbgg_core::shell::restore_leftover(Some(owner));
 }
 
 /// Restores a session interrupted by a crash or power loss.

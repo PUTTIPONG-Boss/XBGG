@@ -3,6 +3,7 @@
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
 `x86_64-pc-windows-gnu`.
 
+- **v0.5.0** (shell mode, Windows services): see [v0.5.0](#v050--shell-mode-and-windows-services) below.
 - **v0.4.0** (layout switch, square everything): see [v0.4.0](#v040--two-layouts) below.
 - **v0.3.0** (terminal UI): see [v0.3.0](#v030--terminal-ui) below.
 - **v0.2.0** (Boost mode): see [Boost](#boost) and [v0.2.0 regression](#v020-regression)
@@ -13,6 +14,62 @@ Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1
   Defender found no threats in it or the zip.
 - v0.1.1 (`c0498094…a0e5db`) differs from v0.1.0 only by the keyboard-layout
   fix (bug #10).
+
+## v0.5.0 — shell mode and Windows services
+
+### Shell mode — `tools/shell-test.ps1`
+
+Closes and restores the real taskbar several times; open File Explorer windows
+are recorded and reopened, `library.json` restored, and the desktop always
+brought back.
+
+| Check | Result |
+|---|---|
+| Taskbar closes when XBGG starts with *hide desktop* on | ✅ |
+| The desktop's Explorer process really exits (ended after 4 s if it lingers) | ✅ |
+| State recorded before hiding; guard running; XBGG in front | ✅ |
+| Exit from the menu → **responsive** taskbar and shell window back, state removed, guard gone | ✅ |
+| **Crash** (XBGG killed) → guard brings back a responsive desktop | ✅ |
+| Menu toggle on/off closes/restores the desktop live | ✅ |
+| *start with windows* adds/removes `HKCU\…\Run\XBGG` = `"…\xbgg.exe" --autostart` | ✅ |
+| File Explorer window inside the desktop process → desktop left alone, message shown | ✅ (separate run) |
+| Available RAM with the desktop closed | +140 to +330 MB across runs |
+
+Final runs: 18/18 twice in a row.
+
+**Bugs found here and fixed before release** (each one left the test
+machine's taskbar broken until the test's failsafe restarted Explorer):
+
+| # | Problem | Fix |
+|---|---|---|
+| 1 | With a File Explorer window open, Explorer stayed alive after *Exit Explorer*; the Explorer started on restore then hung (taskbar not responding, no desktop window). | Refuse to hide while the desktop process shows File Explorer windows; check the restored taskbar is responsive. |
+| 2 | When another program holds a reference to the shell, Explorer lingers without a taskbar. The first fix ended it and expected Windows to restart it (AutoRestartShell) — Windows didn't, and XBGG had already given up on restoring it. | End the lingering process and treat the desktop as hidden, so XBGG restores it on exit; restoring now replaces a missing or hung taskbar with a fresh Explorer. |
+
+### Pausing Windows services
+
+| Check | Result |
+|---|---|
+| Unit tests: allowlist, fixed task XML, service query without admin | ✅ |
+| `--services pause` without admin: refuses, exit code 1, services untouched, **no folder created** | ✅ |
+| One-time setup via UAC: helper in `Program Files\XBGG`, both tasks registered; folder writable only by Administrators / SYSTEM / TrustedInstaller | ✅ |
+| Non-admin `schtasks /run` of the tasks pauses and resumes the services (no prompt) | ✅ |
+| Menu shows *update helper* when the helper is older than XBGG; updating via UAC works | ✅ |
+| `boost-test.ps1 -Services` with Deadlock: services **stopped + Disabled** while playing, back to **Running / Automatic** after the game, guard resumes them after a crash | ✅ 26/26 |
+
+**Found and fixed during these tests:**
+
+| # | Problem | Fix |
+|---|---|---|
+| 3 | **Security**: the services state file was in `%ProgramData%\XBGG`, a folder a normal user can create — a planted link there could redirect the elevated helper's writes. | State now lives next to the helper in `Program Files\XBGG` (admins only); the helper never creates folders itself. |
+| 4 | Windows Search restarted itself seconds after being stopped. | Services are disabled while paused; the original start type is recorded first and restored on resume. |
+
+### Regression on v0.5.0
+
+Unit tests 37/37, clippy clean; `bench.ps1` 14.6 MB / 0 MB VRAM; `soak.ps1`
+150 cycles peak 16.7 MB, handles 293 → 281; `focus-soak.ps1` threads 13 → 13,
+handles 291 → 291; `custom-entry-test.ps1` PASS; `game-launch-test.ps1`
+(Deadlock: XBGG 16 ms CPU over 30 s, back in front after exit);
+`update-test.ps1` PASS; 20 layout switches bounded.
 
 ## v0.4.0 — two layouts
 

@@ -4,6 +4,32 @@ All notable changes to XBGG are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-20
+
+### Added
+- **Shell mode** (menu):
+  - **start with windows** — registers XBGG to start at sign-in (current user
+    only, `HKCU\…\Run`).
+  - **hide desktop while open** — closes the Windows desktop and taskbar
+    (Explorer exits cleanly, like *Exit Explorer*) while XBGG is open and
+    brings it back when XBGG closes. If File Explorer windows are open in the
+    desktop process it refuses and says so. If Explorer lingers it is ended,
+    and on the way back a stuck or missing taskbar is replaced by a fresh
+    one. Crash-safe: recorded before acting, restored by the guard process
+    or at the next start; `xbgg --restore` restores it by hand.
+- **Pause Windows services while playing** (Boost, opt-in): Windows Search
+  indexing, SysMain, Telemetry and Delivery Optimization are stopped and
+  temporarily disabled (so they can't restart themselves), and their exact
+  start types are restored afterwards. Needs a one-time administrator setup
+  from the menu: a helper copy in `Program Files\XBGG` plus two Task
+  Scheduler tasks with fixed arguments, so no prompt appears during play.
+  The menu offers to update the helper when XBGG is newer, and to remove it.
+
+### Security
+- The elevated helper accepts no input from the user side: a hard-coded
+  service allowlist, state kept next to the helper in an administrators-only
+  folder, `schtasks.exe` called by full path.
+
 ## [0.4.0] - 2026-11-20
 
 ### Added
@@ -102,6 +128,7 @@ First public release: the game library shell.
 
 See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for measurements.
 
+[0.5.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.5.0
 [0.4.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.4.0
 [0.3.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.2.0

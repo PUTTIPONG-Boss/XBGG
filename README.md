@@ -59,6 +59,11 @@ gives it back when you're done.
 | **Freeze background apps** | Suspends the apps you pick and releases their RAM. Nothing is closed: they resume exactly where they were — tabs, documents, everything. | On: browsers, Wallpaper Engine, Teams, Slack, OneDrive, Dropbox, Widgets, Adobe helpers |
 | **Best performance power mode** | Switches Windows' power mode slider, restores your previous mode afterwards. | On |
 | **High priority for games** | Raises the game's process priority; re-applies it if the game resets it while loading. | Off |
+| **Pause Windows services** | Stops and temporarily disables Windows Search indexing, SysMain, Telemetry and Delivery Optimization; restores their exact start types afterwards. Needs a one-time admin setup (below). | Off |
+
+**How to use it:** just launch the game from XBGG. Boost starts when you press
+play and ends by itself when the game closes. Games started outside XBGG
+(e.g. a desktop shortcut) are not boosted.
 
 ![XBGG menu](docs/menu.jpg)
 
@@ -80,13 +85,52 @@ In testing, freezing an app holding 1.5 GB released **1.4 GB of RAM** to the
 game within two seconds, and everything resumed **2.4 s** after the game
 closed ([details](docs/TEST_REPORT.md#boost)).
 
+### Pausing Windows services (one-time admin setup)
+
+Stopping services needs administrator rights. Turning on *Menu → pause
+windows services* shows **one** UAC prompt, after which XBGG:
+
+1. copies itself to `C:\Program Files\XBGG\xbgg-helper.exe` (only
+   administrators can change files there), and
+2. registers two Task Scheduler tasks, `\XBGG\Pause services` and
+   `\XBGG\Resume services`, that run that copy with fixed arguments.
+
+From then on XBGG just starts those tasks — no prompt during play. The helper
+takes no input from XBGG: it only touches the four services above and only
+restarts what it stopped. When XBGG is updated the menu offers to update the
+helper; *Menu → remove admin helper* resumes everything and deletes the tasks
+and the copy.
+
+## Shell mode
+
+Use XBGG instead of the Windows desktop:
+
+- **Menu → start with windows** — starts XBGG when you sign in (current user
+  only).
+- **Menu → hide desktop while open** — closes the desktop and taskbar while
+  XBGG is open (Explorer exits, freeing its memory) and brings them back when
+  you exit XBGG.
+
+Safety:
+
+- If **File Explorer windows are open**, XBGG leaves the desktop alone and
+  asks you to close them first (they live in the same process).
+- Coming back, XBGG waits for a working taskbar; if it's missing or stuck, it
+  starts a fresh one.
+- If XBGG crashes, its guard process brings the desktop back; after a power
+  cut, the next start does. `xbgg --restore` does it by hand, and
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Del</kbd> → Task Manager → *Run new task*
+  → `explorer` always works.
+- XBGG does **not** replace the Windows shell in the registry, so a problem
+  can never leave you at a black screen when signing in.
+
 ## Performance
 
 Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 1920×1080, 7-game library, release build. Full method and raw results:
 [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
-| Metric | XBGG v0.4.0 (terminal layout) |
+| Metric | XBGG v0.5.0 (terminal layout) |
 |---|---|
 | GPU memory (VRAM) | **0 MB** — UI is rendered on the CPU; a laptop's discrete GPU is never woken |
 | Private memory | ~14 MB |
@@ -137,7 +181,7 @@ xbgg [OPTIONS]
   --no-update      Skip the update check on startup
   --list           Print the detected game library and exit
   --check-update   Check GitHub for a newer release and exit
-  --restore        Unfreeze apps left frozen by an interrupted boost and exit
+  --restore        Undo an interrupted boost / hidden desktop and exit
   --version        Print the version and exit
   --help           Show help
 ```
@@ -148,7 +192,11 @@ xbgg [OPTIONS]
   entries, last-played times, Boost settings). To un-hide a game, remove its
   id from `hidden` and press F5.
 - While a boost runs, `%APPDATA%\XBGG\boost-journal.json` records what was
-  changed; it is deleted when everything is restored.
+  changed; while the desktop is hidden, `%APPDATA%\XBGG\shell-state.json`
+  does. Both are deleted when everything is restored.
+- Only if you set up service pausing: `C:\Program Files\XBGG\` (helper copy
+  and the list of paused services) and the two `\XBGG\…` scheduled tasks.
+  *Menu → remove admin helper* removes them.
 - The only network request is a check of this repository's latest GitHub
   release at startup (disable with `--no-update`). No telemetry.
 - If XBGG ever crashes, the reason is appended to `%APPDATA%\XBGG\crash.log`.
@@ -182,9 +230,6 @@ docs/          test report, screenshots
 
 ## Roadmap
 
-- **Windows services** — pause Search indexing, SysMain and Delivery
-  Optimization while playing (needs a small, opt-in admin helper).
-- **Shell mode** — boot straight into XBGG instead of the desktop.
 - **Resource report** — show how much RAM/VRAM/CPU was handed back to the game.
 - More stores (Xbox / Game Pass, EA app, Ubisoft Connect, Battle.net).
 

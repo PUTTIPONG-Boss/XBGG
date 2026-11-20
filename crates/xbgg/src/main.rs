@@ -46,6 +46,13 @@ struct App {
     boost: RefCell<boost::Controller>,
     /// Rows currently shown on the "Apps to freeze" screen.
     app_rows: RefCell<Vec<xbgg_core::boost::apps::AppInfo>>,
+    /// Shell mode: this process closed the Windows desktop.
+    desktop_hidden: Cell<bool>,
+    /// Cached "is the admin helper for services installed" (schtasks is slow).
+    helper_installed: Cell<Option<bool>>,
+    /// Polls an elevated helper run (UAC prompt) without blocking the UI.
+    admin_timer: Timer,
+    admin_result: Arc<Mutex<Option<anyhow::Result<u32>>>>,
 }
 
 impl App {
@@ -140,7 +147,7 @@ Options:
   --no-update      Skip the update check on startup
   --list           Print the detected game library and exit
   --check-update   Check GitHub for a newer release and exit
-  --restore        Unfreeze apps left frozen by an interrupted boost and exit
+  --restore        Undo an interrupted boost / hidden desktop and exit
   --version        Print the version and exit
   --help           Show this help";
 
@@ -180,8 +187,27 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    // Elevated helper modes (run by the Task Scheduler tasks / UAC prompt).
+    if let Some(i) = args.iter().position(|a| a == "--services") {
+        let result = match args.get(i + 1).map(String::as_str) {
+            Some("pause") => xbgg_core::boost::services::pause_now().map(|_| ()),
+            Some("resume") => xbgg_core::boost::services::resume_now().map(|_| ()),
+            _ => Err(anyhow::anyhow!("--services needs pause or resume")),
+        };
+        return result;
+    }
+    if has("--install-service-helper") {
+        return xbgg_core::boost::services::install(&std::env::current_exe()?);
+    }
+    if has("--uninstall-service-helper") {
+        return xbgg_core::boost::services::uninstall();
+    }
+
     if has("--restore") {
         platform::attach_console();
+        if xbgg_core::shell::restore_leftover(None) {
+            println!("Desktop restored");
+        }
         match boost::recover() {
             Some(r) => println!(
                 "Restored an interrupted boost: {} processes resumed, {} already gone{}",
@@ -221,7 +247,7 @@ fn main() -> anyhow::Result<()> {
         };
     }
     if let Some(unknown) = args.iter().find(|a| {
-        !matches!(a.as_str(), "--windowed" | "--no-update")
+        !matches!(a.as_str(), "--windowed" | "--no-update" | "--autostart")
     }) {
         platform::attach_console();
         eprintln!("Unknown option: {unknown}\n\n{HELP}");
@@ -261,7 +287,16 @@ fn main() -> anyhow::Result<()> {
         pending_update: Arc::default(),
         boost: RefCell::default(),
         app_rows: RefCell::default(),
+        desktop_hidden: Cell::new(false),
+        helper_installed: Cell::new(None),
+        admin_timer: Timer::default(),
+        admin_result: Arc::default(),
     });
+    // A desktop left hidden by a crashed XBGG comes back, unless shell mode
+    // is on (then this instance takes over hiding it).
+    if !app.library.borrow().ui().hide_desktop {
+        xbgg_core::shell::restore_leftover(None);
+    }
     ui.set_layout(if app.console() { 1 } else { 0 });
     app.sync(&ui, None);
     ui.set_boost_enabled(app.library.borrow().boost().enabled);
@@ -284,18 +319,106 @@ fn main() -> anyhow::Result<()> {
     }
     // The real window size and DPI are only known once the window is shown;
     // prepare artwork for them then.
-    let weak = ui.as_weak();
+    let (weak, app2) = (ui.as_weak(), app.clone());
     Timer::single_shot(Duration::from_millis(100), move || {
         if let Some(ui) = weak.upgrade() {
             ui.invoke_layout_changed();
+            // Shell mode: take over the screen once XBGG is up.
+            if app2.library.borrow().ui().hide_desktop {
+                app2.hide_desktop(&ui);
+            }
         }
     });
     let result = ui.run();
     // However XBGG closes (menu, window button, update restart), unfreeze
-    // everything before the process ends.
+    // everything and bring the desktop back before the process ends.
     app.boost.borrow_mut().shutdown();
+    app.show_desktop();
     result?;
     Ok(())
+}
+
+impl App {
+    /// Shell mode: closes the Windows desktop/taskbar while XBGG is open.
+    fn hide_desktop(&self, ui: &AppWindow) {
+        use xbgg_core::shell;
+        if self.desktop_hidden.get() || !shell::desktop_running() {
+            return;
+        }
+        let Some(path) = shell::state_path() else { return };
+        // Record first, so a crash can always be undone.
+        let state = shell::ShellState { desktop_hidden: true, owner_pid: std::process::id() };
+        if let Err(e) = shell::save_state(&path, &state) {
+            self.set_status(ui, format!("Couldn't hide the desktop: {e:#}"));
+            return;
+        }
+        self.boost.borrow_mut().ensure_guard();
+        self.desktop_hidden.set(true);
+        match shell::hide_desktop(Duration::from_secs(4)) {
+            shell::Hide::Hidden => platform::focus_self(),
+            other => {
+                self.desktop_hidden.set(false);
+                let _ = std::fs::remove_file(&path);
+                let msg = match other {
+                    shell::Hide::FolderWindowsOpen(n) => format!(
+                        "Desktop not hidden: close the {n} open File Explorer window{} first",
+                        if n == 1 { "" } else { "s" }
+                    ),
+                    _ => "The desktop could not be closed".into(),
+                };
+                self.set_status(ui, msg);
+            }
+        }
+    }
+
+    /// Brings the Windows desktop back (if this process hid it).
+    fn show_desktop(&self) {
+        if !self.desktop_hidden.replace(false) {
+            return;
+        }
+        let _ = xbgg_core::shell::show_desktop(Duration::from_secs(20));
+        if let Some(p) = xbgg_core::shell::state_path() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    /// The admin helper is installed *and* is this version of XBGG (it is a
+    /// copy in Program Files, so it doesn't update itself).
+    fn helper_installed(&self) -> bool {
+        if let Some(v) = self.helper_installed.get() {
+            return v;
+        }
+        use xbgg_core::boost::services;
+        let v = services::helper_installed() && services::helper_matches(&update::current_version().to_string());
+        self.helper_installed.set(Some(v));
+        v
+    }
+
+    fn helper_outdated(&self) -> bool {
+        !self.helper_installed() && xbgg_core::boost::services::helper_exe().is_file()
+    }
+
+    /// Runs `xbgg <args>` elevated (one UAC prompt) on a worker thread and
+    /// calls `done` on the UI thread when it finishes.
+    fn run_admin(self: &Rc<Self>, ui: &AppWindow, args: &'static str, done: impl Fn(&App, &AppWindow, anyhow::Result<u32>) + 'static) {
+        ui.set_input_blocked(true);
+        self.set_status(ui, "Approve the administrator prompt to continue…");
+        let slot = self.admin_result.clone();
+        *slot.lock().unwrap() = None;
+        std::thread::spawn(move || {
+            let r = platform::run_elevated(args);
+            *slot.lock().unwrap() = Some(r);
+        });
+        let (app, weak, slot) = (Rc::downgrade(self), ui.as_weak(), self.admin_result.clone());
+        self.admin_timer.start(TimerMode::Repeated, Duration::from_millis(200), move || {
+            let Some(r) = slot.lock().unwrap().take() else { return };
+            if let (Some(app), Some(ui)) = (app.upgrade(), weak.upgrade()) {
+                app.admin_timer.stop();
+                ui.set_input_blocked(false);
+                done(&app, &ui, r);
+            }
+        });
+    }
 }
 
 fn on_off(on: bool) -> slint::SharedString {
@@ -330,6 +453,22 @@ fn refresh_menu(app: &App, ui: &AppWindow) {
     ));
     rows.push(row("power", "best performance power mode", on_off(cfg.power_mode), cfg.power_mode, off));
     rows.push(row("priority", "high priority for games", on_off(cfg.game_priority), cfg.game_priority, off));
+    let helper = app.helper_installed();
+    let services_label = if helper {
+        "pause windows services"
+    } else if app.helper_outdated() {
+        "pause windows services (update helper)"
+    } else {
+        "pause windows services (admin setup)"
+    };
+    rows.push(row("services", services_label, on_off(cfg.pause_services && helper), cfg.pause_services && helper, off));
+    if helper {
+        rows.push(row("helper", "remove admin helper", "".into(), false, false));
+    }
+    let autostart = xbgg_core::shell::autostart(xbgg_core::shell::RUN_VALUE).is_some();
+    rows.push(row("autostart", "start with windows", on_off(autostart), autostart, false));
+    let hide = app.library.borrow().ui().hide_desktop;
+    rows.push(row("desktop", "hide desktop while open", on_off(hide), hide, false));
     if active {
         rows.push(row("end", "end boost now", "active".into(), true, false));
     }
@@ -391,6 +530,9 @@ fn on_boost_event(ui: &AppWindow, event: boost::Event) {
             if r.power_changed {
                 chip.push("best performance".into());
             }
+            if !r.services_paused.is_empty() {
+                chip.push(format!("{} services paused", r.services_paused.len()));
+            }
             if chip.is_empty() {
                 chip.push("on".into());
             }
@@ -402,6 +544,12 @@ fn on_boost_event(ui: &AppWindow, event: boost::Event) {
                 let more = r.frozen_apps.len().saturating_sub(3);
                 status += &format!(" — froze {}{}", names.join(", "), if more > 0 { format!(" +{more}") } else { String::new() });
                 status += &format!(" · {} released", boost::mib(r.trimmed_bytes));
+            }
+            if !r.services_paused.is_empty() {
+                status += &format!(" · paused {}", r.services_paused.join(", "));
+            }
+            if r.services_need_setup {
+                status += " · services: finish the admin setup in the menu";
             }
             if !r.skipped.is_empty() {
                 status += &format!(" · {} not allowed", r.skipped.len());
@@ -417,6 +565,9 @@ fn on_boost_event(ui: &AppWindow, event: boost::Event) {
             }
             if s.restore.power_restored {
                 status += " · power mode restored";
+            }
+            if s.restore.services_resumed {
+                status += " · services resumed";
             }
             ui.set_status(status.into());
             if ui.get_panel() == 1 {
@@ -635,6 +786,68 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
                 "freeze" => toggle(|c| c.freeze_apps = !c.freeze_apps),
                 "power" => toggle(|c| c.power_mode = !c.power_mode),
                 "priority" => toggle(|c| c.game_priority = !c.game_priority),
+                "services" => {
+                    let on = app.library.borrow().boost().pause_services && app.helper_installed();
+                    if on {
+                        toggle(|c| c.pause_services = false);
+                    } else if app.helper_installed() {
+                        toggle(|c| c.pause_services = true);
+                    } else {
+                        // One-time setup needs administrator rights.
+                        app.run_admin(&ui, "--install-service-helper", |app, ui, r| {
+                            app.helper_installed.set(None);
+                            match r {
+                                Ok(0) if app.helper_installed() => {
+                                    let _ = app.library.borrow_mut().update_boost(|c| c.pause_services = true);
+                                    app.set_status(ui, "Windows services will be paused while you play");
+                                }
+                                Ok(code) => app.set_status(ui, format!("Admin setup failed (exit code {code})")),
+                                Err(e) => app.set_status(ui, format!("Admin setup not done: {e:#}")),
+                            }
+                            if ui.get_panel() == 1 {
+                                refresh_menu(app, ui);
+                            }
+                        });
+                    }
+                }
+                "helper" => {
+                    app.run_admin(&ui, "--uninstall-service-helper", |app, ui, r| {
+                        app.helper_installed.set(None);
+                        let _ = app.library.borrow_mut().update_boost(|c| c.pause_services = false);
+                        match r {
+                            Ok(0) => app.set_status(ui, "Admin helper removed; services resumed"),
+                            Ok(code) => app.set_status(ui, format!("Removing the helper failed (exit code {code})")),
+                            Err(e) => app.set_status(ui, format!("Not removed: {e:#}")),
+                        }
+                        if ui.get_panel() == 1 {
+                            refresh_menu(app, ui);
+                        }
+                    });
+                }
+                "autostart" => {
+                    use xbgg_core::shell::{autostart, set_autostart, RUN_VALUE};
+                    let result = if autostart(RUN_VALUE).is_some() {
+                        set_autostart(RUN_VALUE, None)
+                    } else {
+                        std::env::current_exe().map_err(Into::into).and_then(|exe| set_autostart(RUN_VALUE, Some(&exe)))
+                    };
+                    if let Err(e) = result {
+                        app.set_status(&ui, format!("Couldn't change start-up: {e:#}"));
+                    }
+                }
+                "desktop" => {
+                    let on = !app.library.borrow().ui().hide_desktop;
+                    match app.library.borrow_mut().set_hide_desktop(on) {
+                        Ok(()) => {}
+                        Err(e) => app.set_status(&ui, format!("Couldn't save settings: {e:#}")),
+                    }
+                    if on {
+                        app.hide_desktop(&ui);
+                    } else {
+                        app.show_desktop();
+                        platform::focus_self();
+                    }
+                }
                 "apps" => ui.invoke_open_apps(),
                 "end" => {
                     app.boost.borrow_mut().stop();
