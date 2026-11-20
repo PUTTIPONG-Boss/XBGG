@@ -41,6 +41,14 @@ PASS, `focus-soak` 40/40 (threads 13 → 9, handles 297 → 290),
 exit), `boost-test` 19/19 (+1378 MB available, restored 2.3 s after exit),
 `update-test` PASS.
 
+**Real update, published binaries only**: v0.2.0 downloaded from GitHub,
+Menu → *install update* → confirm; it exited 5 s later and restarted as
+v0.3.0 (SHA-256 equals the published checksum, no leftover files), showing
+the new interface. In the first of these runs the restarted app showed row 3
+selected instead of row 1; three identical re-runs (and a start with the
+post-update flag set) all selected row 1, so it was most likely real input
+reaching the machine during the test, not reproducible.
+
 ## Boost
 
 ### Unit and integration tests (`cargo test --release`, core)
