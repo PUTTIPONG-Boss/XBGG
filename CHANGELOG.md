@@ -4,6 +4,24 @@ All notable changes to XBGG are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-20
+
+A new, terminal-style interface.
+
+### Changed
+- **Terminal UI**: a library list (title / source / last played) and a
+  details pane with the cover, framed TUI panels, one monospace face
+  (Cascadia Mono, embedded), one accent colour, inverse-video selection, an
+  htop-style key bar. Menu, "apps to freeze" and confirmations are framed
+  dialogs. No carousel, background art, gradients, rounded corners or
+  animation.
+- ↑/↓ (d-pad, stick, arrow keys) move through the library; ←/→ still work;
+  Page Up/Down jump a screen.
+
+### Performance
+- Private memory 25.5 → **13.7 MB**: only the focused game's cover is decoded.
+- CPU to move through 12 entries ~1100 → **~190 ms** (nothing animates).
+
 ## [0.2.0] - 2026-11-20
 
 Boost mode: XBGG now frees resources for the game while you play.
@@ -71,6 +89,7 @@ First public release: the game library shell.
 
 See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for measurements.
 
+[0.3.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.3.0
 [0.2.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.2.0
 [0.1.1]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.1.1
 [0.1.0]: https://github.com/PUTTIPONG-Boss/XBGG/releases/tag/v0.1.0

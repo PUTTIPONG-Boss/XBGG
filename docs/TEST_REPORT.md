@@ -3,6 +3,7 @@
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
 `x86_64-pc-windows-gnu`.
 
+- **v0.3.0** (terminal UI): see [v0.3.0](#v030--terminal-ui) below.
 - **v0.2.0** (Boost mode): see [Boost](#boost) and [v0.2.0 regression](#v020-regression)
   below. Final binary `xbgg.exe` v0.2.0, SHA-256
   `1d56ac83a0fac7c73907f08b9606a392192d52de669adc8d035dbb7030217670`: the full
@@ -11,6 +12,34 @@ Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1
   Defender found no threats in it or the zip.
 - v0.1.1 (`c0498094…a0e5db`) differs from v0.1.0 only by the keyboard-layout
   fix (bug #10).
+
+## v0.3.0 — terminal UI
+
+The carousel, background art and animations were replaced by a list +
+details layout. Measured against v0.2.0 on the same machine:
+
+| Metric (`bench.ps1 -Fullscreen`) | v0.2.0 | v0.3.0 |
+|---|---|---|
+| Private memory | 25.5 MB | **14.6 MB** |
+| CPU for 12 moves | ~1100 ms | **~200 ms** |
+| Startup to window | ~350 ms | ~340 ms |
+| GPU memory | 0 MB | 0 MB |
+
+Leak hunting on the new UI (`tools/leak-isolate.ps1` repeats one action):
+
+| Action | Result |
+|---|---|
+| Open menu + app list, 150× | flat (14.8 → 14.6 MB) |
+| Rescan library, 400× | flat (14.2 → 14.1 MB) |
+| Move up/down (each move loads a cover), 1000× — **first version** | rose to a 16.6 MB plateau: one thread was spawned per cover decode, fragmenting the heap |
+| same, after switching to one long-lived cover worker | plateau **14.9 MB**, flat over 2000 cover loads |
+| `soak.ps1 -Cycles 300` (all actions) | peak 16.2 MB in the first 50 cycles and never higher afterwards; handles 292 → 287, GDI 17 → 17 |
+
+Regression on v0.3.0: unit tests 30/30, clippy clean, `custom-entry-test`
+PASS, `focus-soak` 40/40 (threads 13 → 9, handles 297 → 290),
+`game-launch-test` (Deadlock: XBGG 31 ms CPU over 30 s, back in front after
+exit), `boost-test` 19/19 (+1378 MB available, restored 2.3 s after exit),
+`update-test` PASS.
 
 ## Boost
 

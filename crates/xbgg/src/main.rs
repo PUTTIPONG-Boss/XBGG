@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use slint::{Color, ComponentHandle, Image, ModelRc, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, ModelRc, Timer, TimerMode, VecModel};
 use xbgg_core::{Game, Library, Source, ADDABLE_EXTENSIONS};
 
 use gamepad::PadAction;
@@ -35,8 +35,7 @@ struct App {
     status_timer: Timer,
     last_launch: Cell<Option<Instant>>,
     picking_file: Cell<bool>,
-    hero: art::HeroLoader,
-    covers: RefCell<art::CoverCache>,
+    cover: art::CoverLoader,
     layout_timer: Timer,
     /// Filled by the background update check.
     pending_update: Arc<Mutex<Option<update::Release>>>,
@@ -46,39 +45,26 @@ struct App {
 }
 
 impl App {
-    fn load_hero(&self, ui: &AppWindow, index: i32) {
+    /// Shows the cover of the entry at `index`, at the exact on-screen size.
+    fn load_cover(&self, ui: &AppWindow, index: i32) {
         let path = usize::try_from(index)
             .ok()
-            .and_then(|i| self.library.borrow().games().get(i).and_then(|g| g.hero.clone()));
-        let size = ui.window().size();
-        self.hero.request(ui, path, size.width, size.height);
-    }
-
-    /// Tile size in physical pixels, so covers are drawn 1:1.
-    fn cover_size(ui: &AppWindow) -> art::CoverSize {
+            .and_then(|i| self.library.borrow().games().get(i).and_then(|g| g.cover.clone()));
         let scale = ui.window().scale_factor();
         let px = |logical: f32| (logical * scale).round().max(0.0) as u32;
-        art::CoverSize {
-            width: px(ui.get_tile_width()),
-            height: px(ui.get_tile_height()),
-            radius: px(ui.get_tile_radius()),
-        }
+        // The image sits inside a 1px border.
+        let border = px(1.0) * 2;
+        let (w, h) = (px(ui.get_cover_w()).saturating_sub(border), px(ui.get_cover_h()).saturating_sub(border));
+        self.cover.request(ui, path, w, h);
     }
 
     /// Pushes the library into the UI, optionally focusing the entry with `select_id`.
     fn sync(&self, ui: &AppWindow, select_id: Option<&str>) {
         let lib = self.library.borrow();
-        let paths: Vec<_> = lib.games().iter().filter_map(|g| g.cover.clone()).collect();
-        let mut covers = self.covers.borrow_mut();
-        covers.ensure(&paths, Self::cover_size(ui));
-        covers.retain(&paths);
-        let tiles: Vec<GameTile> = lib
-            .games()
-            .iter()
-            .map(|g| to_tile(g, g.cover.as_deref().and_then(|p| covers.get(p))))
-            .collect();
-        drop(covers);
+        let now = xbgg_core::now_unix();
+        let tiles: Vec<GameTile> = lib.games().iter().map(|g| to_tile(g, now)).collect();
         self.model.set_vec(tiles);
+        self.cover.reset();
         let count = lib.games().len() as i32;
         ui.set_scanned_count(count);
         let selected = select_id
@@ -87,7 +73,7 @@ impl App {
             .unwrap_or_else(|| ui.get_selected().clamp(0, count));
         drop(lib);
         ui.set_selected(selected);
-        self.load_hero(ui, selected);
+        self.load_cover(ui, selected);
     }
 
     fn set_status(&self, ui: &AppWindow, text: impl Into<slint::SharedString>) {
@@ -225,14 +211,14 @@ fn main() -> anyhow::Result<()> {
         status_timer: Timer::default(),
         last_launch: Cell::new(None),
         picking_file: Cell::new(false),
-        hero: art::HeroLoader::default(),
-        covers: RefCell::default(),
+        cover: art::CoverLoader::default(),
         layout_timer: Timer::default(),
         pending_update: Arc::default(),
         boost: RefCell::default(),
         app_rows: RefCell::default(),
     });
     app.sync(&ui, None);
+    ui.set_boost_enabled(app.library.borrow().boost().enabled);
     let had_warning = report_warnings(&app, &ui);
     if let Some(r) = recovered.filter(|r| r.resumed > 0 || r.power_restored) {
         if !had_warning {
@@ -272,6 +258,7 @@ fn on_off(on: bool) -> slint::SharedString {
 
 fn refresh_menu(app: &App, ui: &AppWindow) {
     let cfg = app.library.borrow().boost().clone();
+    ui.set_boost_enabled(cfg.enabled);
     let active = app.boost.borrow_mut().is_active();
     let row = |id: &str, label: &str, value: slint::SharedString, on: bool, dim: bool| MenuRow {
         id: id.into(),
@@ -283,25 +270,25 @@ fn refresh_menu(app: &App, ui: &AppWindow) {
     let mut rows = Vec::new();
     let update = ui.get_update_version();
     if !update.is_empty() {
-        rows.push(row("update", &format!("Install update v{update}"), "New".into(), true, false));
+        rows.push(row("update", &format!("install update {update}"), "new".into(), true, false));
     }
-    rows.push(row("boost", "Boost while playing", on_off(cfg.enabled), cfg.enabled, false));
+    rows.push(row("boost", "boost while playing", on_off(cfg.enabled), cfg.enabled, false));
     let off = !cfg.enabled;
-    rows.push(row("freeze", "Freeze background apps", on_off(cfg.freeze_apps), cfg.freeze_apps, off));
+    rows.push(row("freeze", "freeze background apps", on_off(cfg.freeze_apps), cfg.freeze_apps, off));
     rows.push(row(
         "apps",
-        "Apps to freeze",
-        format!("{} selected", cfg.freeze_list.len()).into(),
+        "apps to freeze",
+        format!("{} selected  >", cfg.freeze_list.len()).into(),
         false,
         off || !cfg.freeze_apps,
     ));
-    rows.push(row("power", "Best performance power mode", on_off(cfg.power_mode), cfg.power_mode, off));
-    rows.push(row("priority", "High priority for games", on_off(cfg.game_priority), cfg.game_priority, off));
+    rows.push(row("power", "best performance power mode", on_off(cfg.power_mode), cfg.power_mode, off));
+    rows.push(row("priority", "high priority for games", on_off(cfg.game_priority), cfg.game_priority, off));
     if active {
-        rows.push(row("end", "End boost now", "Active".into(), true, false));
+        rows.push(row("end", "end boost now", "active".into(), true, false));
     }
-    rows.push(row("rescan", "Rescan library", "".into(), false, false));
-    rows.push(row("exit", "Exit XBGG", "".into(), false, false));
+    rows.push(row("rescan", "rescan library", "".into(), false, false));
+    rows.push(row("exit", "exit xbgg", "".into(), false, false));
 
     let count = rows.len() as i32;
     ui.set_menu_rows(ModelRc::new(VecModel::from(rows)));
@@ -316,15 +303,9 @@ fn refresh_apps(app: &App, ui: &AppWindow) {
         .map(|a| AppRow {
             name: a.name.trim_end_matches(".exe").into(),
             detail: if a.running() {
-                format!(
-                    "Running · {} process{} · {}",
-                    a.processes,
-                    if a.processes == 1 { "" } else { "es" },
-                    boost::mib(a.memory)
-                )
-                .into()
+                format!("{:>3} proc  {:>8}", a.processes, boost::mib(a.memory)).into()
             } else {
-                "Not running".into()
+                "not running".into()
             },
             on: a.selected,
         })
@@ -539,7 +520,7 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
         let (app, weak) = (app.clone(), ui.as_weak());
         ui.on_focused(move |index| {
             if let Some(ui) = weak.upgrade() {
-                app.load_hero(&ui, index);
+                app.load_cover(&ui, index);
             }
         });
     }
@@ -740,46 +721,51 @@ fn start_update_check(app: &App, ui: &AppWindow) {
     });
 }
 
-fn to_tile(g: &Game, cover: Option<Image>) -> GameTile {
+fn to_tile(g: &Game, now: u64) -> GameTile {
+    let (source, detail) = match g.source {
+        Source::Steam => ("steam", format!("app {}", g.id.trim_start_matches("steam:"))),
+        Source::Epic => ("epic", g.id.trim_start_matches("epic:").to_string()),
+        Source::Gog => ("gog", format!("id {}", g.id.trim_start_matches("gog:"))),
+        Source::Custom => ("custom", String::new()),
+    };
+    let path = g
+        .install_dir
+        .clone()
+        .or_else(|| match &g.launch {
+            xbgg_core::LaunchTarget::Exe { path, .. } | xbgg_core::LaunchTarget::Shell(path) => Some(path.clone()),
+            xbgg_core::LaunchTarget::Uri(_) => None,
+        })
+        .map(|p| {
+            // Steam stores "d:\steam"; show the usual "D:\steam".
+            let mut s = p.display().to_string();
+            if s.as_bytes().get(1) == Some(&b':') {
+                s[..1].make_ascii_uppercase();
+            }
+            s
+        })
+        .unwrap_or_else(|| "-".into());
     GameTile {
         id: g.id.as_str().into(),
         title: g.title.as_str().into(),
-        source: g.source.label().into(),
-        has_cover: cover.is_some(),
-        cover: cover.unwrap_or_default(),
-        accent: accent_for(&g.title),
-        initials: initials(&g.title).into(),
+        source: source.into(),
+        played: relative_time(g.last_played, now).into(),
+        detail: detail.into(),
+        path: path.into(),
     }
 }
 
-/// A stable, muted color derived from the title, used when no artwork exists.
-fn accent_for(title: &str) -> Color {
-    let hash = title.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
-    let hue = (hash % 360) as f32;
-    let (s, l) = (0.45f32, 0.34f32);
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r, g, b) = match hue as u32 / 60 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let to = |v: f32| ((v + m) * 255.0).round() as u8;
-    Color::from_rgb_u8(to(r), to(g), to(b))
-}
-
-fn initials(title: &str) -> String {
-    let letters: String = title
-        .split(|c: char| !c.is_alphanumeric())
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .flat_map(char::to_uppercase)
-        .collect();
-    if letters.is_empty() { "?".into() } else { letters }
+/// "just now", "12m ago", "3h ago", "5d ago", "6w ago", "2y ago", "-".
+fn relative_time(then: Option<u64>, now: u64) -> String {
+    let Some(then) = then else { return "-".into() };
+    let s = now.saturating_sub(then);
+    match s {
+        0..=59 => "just now".into(),
+        60..=3_599 => format!("{}m ago", s / 60),
+        3_600..=86_399 => format!("{}h ago", s / 3_600),
+        86_400..=1_209_599 => format!("{}d ago", s / 86_400),
+        1_209_600..=31_535_999 => format!("{}w ago", s / 604_800),
+        _ => format!("{}y ago", s / 31_536_000),
+    }
 }
 
 /// `xbgg --list`: prints what the scanners found (for debugging).
@@ -800,4 +786,21 @@ fn list_library() -> anyhow::Result<()> {
     }
     println!("{} entries", lib.games().len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative_time;
+
+    #[test]
+    fn relative_times() {
+        let now = 10_000_000;
+        assert_eq!(relative_time(None, now), "-");
+        assert_eq!(relative_time(Some(now - 5), now), "just now");
+        assert_eq!(relative_time(Some(now - 600), now), "10m ago");
+        assert_eq!(relative_time(Some(now - 7_200), now), "2h ago");
+        assert_eq!(relative_time(Some(now - 3 * 86_400), now), "3d ago");
+        assert_eq!(relative_time(Some(now - 30 * 86_400), now), "4w ago");
+        assert_eq!(relative_time(Some(now + 50), now), "just now", "clock skew");
+    }
 }

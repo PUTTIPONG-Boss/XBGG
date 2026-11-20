@@ -2,7 +2,7 @@
 
 # XBGG
 
-**A lightweight, full-screen console mode for Windows gaming.**
+**A lightweight, full-screen, terminal-style game launcher for Windows.**
 
 Browse every installed game from your couch, launch it with a controller, and
 let the shell get out of the way — XBGG uses no GPU memory and practically no
@@ -20,7 +20,10 @@ CPU while you play.
 ## Features
 
 - **One library for every store** — finds installed games from Steam (all
-  library folders, with local cover and background art), Epic Games and GOG.
+  library folders, with local cover art), Epic Games and GOG.
+- **Terminal-style interface** — a keyboard/controller-driven list with a
+  details pane, framed panels and one monospace font. No animations, no
+  background art: it costs almost nothing to draw.
 - **Add anything** — any `.exe`, shortcut (`.lnk`, `.url`) or script (`.bat`,
   `.cmd`) that the scanners don't find.
 - **Controller first** — Xbox-style controllers, keyboard and mouse all work.
@@ -72,10 +75,10 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 1920×1080, 7-game library, release build. Full method and raw results:
 [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
-| Metric | XBGG v0.2.0 |
+| Metric | XBGG v0.3.0 |
 |---|---|
 | GPU memory (VRAM) | **0 MB** — UI is rendered on the CPU; a laptop's discrete GPU is never woken |
-| Private memory | ~26 MB |
+| Private memory | ~14 MB |
 | CPU while a game is in the foreground | ~0% (16 ms over 45 s with Deadlock running) |
 | CPU while idle in the menu | ~0% |
 | Startup to window | ~0.3 s |
@@ -100,7 +103,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 
 | Controller | Keyboard | Action |
 |---|---|---|
-| D-pad / left stick | ← → (↑ ↓ in menus) | Move |
+| D-pad / left stick | ↑ ↓ (← → also work) | Move |
 | LB / RB | Page Up / Page Down | Jump 5 |
 | A | Enter / Space | Play / Add |
 | X | Insert | Add game or app |
@@ -177,3 +180,7 @@ docs/          test report, screenshots
 ## License
 
 [MIT](LICENSE) © 2026 PUTTIPONG-Boss
+
+The embedded [Cascadia Mono](https://github.com/microsoft/cascadia-code) font
+is © Microsoft Corporation, licensed under the
+[SIL Open Font License 1.1](crates/xbgg/assets/fonts/OFL.txt).

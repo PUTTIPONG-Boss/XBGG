@@ -1,16 +1,26 @@
-// XBGG console shell UI.
+// XBGG — terminal-style shell UI.
+//
+// Design rules: one monospace face, one accent colour, 1px frames with the
+// title on the border, inverse video for the selection, no animation, no
+// gradients, no rounded corners.
+
+import "../assets/fonts/CascadiaMono-Regular.ttf";
+import "../assets/fonts/CascadiaMono-Bold.ttf";
 
 export struct GameTile {
     id: string,
     title: string,
+    // "steam", "epic", "gog", "custom"
     source: string,
-    cover: image,
-    has-cover: bool,
-    accent: color,
-    initials: string,
+    // "2h ago", "3d ago", "-"
+    played: string,
+    // store-specific detail, e.g. "app 1422450"
+    detail: string,
+    // install folder or file
+    path: string,
 }
 
-// One row of the side menu. `value` is shown on the right ("On", "Off", "3 selected").
+// One row of the menu. `value` "On"/"Off" renders as a checkbox.
 export struct MenuRow {
     id: string,
     label: string,
@@ -19,171 +29,124 @@ export struct MenuRow {
     dim: bool,
 }
 
-// One row of the "Apps to freeze" list.
+// One row of "apps to freeze".
 export struct AppRow {
     name: string,
     detail: string,
     on: bool,
 }
 
-global Palette {
-    out property <color> bg: #07090d;
-    out property <color> panel: #141922;
-    out property <color> text: #f2f5fa;
-    out property <color> muted: #9aa4b6;
-    out property <color> focus: #7cf5c4;
-    out property <color> btn-a: #2f9e5a;
-    out property <color> btn-b: #d24a3f;
-    out property <color> btn-x: #3270e0;
-    out property <color> btn-y: #d9a520;
+global T {
+    out property <color> bg: #0c0c0c;
+    out property <color> fg: #c8c8c8;
+    out property <color> bright: #f2f2f2;
+    out property <color> dim: #6e6e6e;
+    out property <color> line: #3c3c3c;
+    out property <color> accent: #5fd787;
+    out property <color> amber: #e5c07b;
+    out property <color> red: #e06c75;
+    // Base font size; set from the window height.
+    in-out property <length> fs: 18px;
+    out property <length> ch: self.fs * 0.6;
+    out property <length> row-h: self.fs * 1.6;
 }
 
-component Badge inherits Rectangle {
-    in property <string> text;
-    border-radius: 12px;
-    background: #ffffff1c;
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        Text {
-            text: root.text;
-            color: Palette.text;
-            font-size: 13px;
-            font-weight: 600;
+// A 1px frame with its title sitting on the top border.
+component Frame inherits Rectangle {
+    in property <string> title;
+    in property <color> tone: T.line;
+    in property <color> title-color: T.dim;
+    border-width: 1px;
+    border-color: root.tone;
+
+    if root.title != "": Rectangle {
+        x: T.ch * 2;
+        y: -self.height / 2;
+        width: label.preferred-width + T.ch * 2;
+        height: T.fs * 1.3;
+        background: T.bg;
+        label := Text {
+            text: root.title;
+            color: root.title-color;
+            font-size: T.fs;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
+    @children
 }
 
-component Hint inherits HorizontalLayout {
-    in property <string> key;
+// "[A] play" — key in a block, label after it.
+component Key inherits HorizontalLayout {
+    in property <string> k;
     in property <string> label;
-    in property <color> tint;
-    spacing: 8px;
+    in property <bool> hot;
+    spacing: T.ch;
     Rectangle {
-        width: 28px;
-        height: 28px;
-        border-radius: 14px;
-        background: root.tint;
-        Text {
-            width: 100%;
-            height: 100%;
-            text: root.key;
-            color: white;
-            font-size: 14px;
-            font-weight: 800;
+        width: kt.preferred-width + T.ch * 1.2;
+        background: root.hot ? T.accent : T.line;
+        kt := Text {
+            text: root.k;
+            color: root.hot ? T.bg : T.bright;
+            font-size: T.fs * 0.9;
+            font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
     }
     Text {
         text: root.label;
-        color: Palette.text;
-        font-size: 15px;
+        color: T.fg;
+        font-size: T.fs * 0.9;
         vertical-alignment: center;
     }
 }
 
-component Tile inherits Rectangle {
-    in property <GameTile> game;
-    in property <bool> selected;
-    callback clicked();
-
-    // Covers arrive pre-sized with rounded corners baked in, so no clipping
-    // (expensive in the software renderer) is needed.
-    border-radius: 18px;
-    background: root.game.has-cover ? transparent
-        : @linear-gradient(160deg, root.game.accent 0%, root.game.accent.darker(0.7) 100%);
-
-    if !root.game.has-cover: VerticalLayout {
-        padding: 18px;
-        alignment: center;
-        spacing: 12px;
-        Text {
-            text: root.game.initials;
-            color: #ffffffe0;
-            font-size: root.height * 0.16;
-            font-weight: 800;
-            horizontal-alignment: center;
-        }
-        Text {
-            text: root.game.title;
-            color: #ffffffcc;
-            font-size: 16px;
-            font-weight: 600;
-            wrap: word-wrap;
-            horizontal-alignment: center;
-        }
+// "source   steam" — dim key in a fixed column, value after it.
+component Kv inherits HorizontalLayout {
+    in property <string> k;
+    in property <string> v;
+    Text {
+        width: T.ch * 9;
+        text: root.k;
+        color: T.dim;
+        font-size: T.fs;
     }
-
-    if root.game.has-cover: Image {
-        width: 100%;
-        height: 100%;
-        source: root.game.cover;
-        image-fit: fill;
-    }
-
-    // Dim tiles that are not focused.
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: root.border-radius;
-        background: #000000;
-        opacity: root.selected ? 0 : 0.38;
-        animate opacity { duration: 180ms; }
-    }
-
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: root.border-radius;
-        border-width: root.selected ? 4px : 0px;
-        border-color: Palette.focus;
-        animate border-width { duration: 140ms; }
-    }
-
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
-        }
+    Text {
+        horizontal-stretch: 1;
+        text: root.v;
+        color: T.fg;
+        font-size: T.fs;
+        overflow: elide;
     }
 }
 
-component AddTile inherits Rectangle {
-    in property <bool> selected;
-    callback clicked();
+// Dimmed screen with a framed box in the middle.
+component Modal inherits Rectangle {
+    in property <string> title;
+    in property <length> box-width;
+    in property <length> box-height;
+    callback dismissed();
+    background: #0c0c0cd8;
 
-    border-radius: 18px;
-    background: root.selected ? #1c2430 : #10151d;
-    border-width: root.selected ? 4px : 2px;
-    border-color: root.selected ? Palette.focus : #ffffff26;
-    animate background, border-width { duration: 140ms; }
-
-    VerticalLayout {
-        alignment: center;
-        spacing: 14px;
-        Text {
-            text: "+";
-            color: Palette.text;
-            font-size: root.height * 0.2;
-            font-weight: 300;
-            horizontal-alignment: center;
-        }
-        Text {
-            text: "Add game or app";
-            color: Palette.muted;
-            font-size: 17px;
-            font-weight: 600;
-            horizontal-alignment: center;
+    TouchArea {
+        clicked => {
+            root.dismissed();
         }
     }
 
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
+    Rectangle {
+        x: (root.width - root.box-width) / 2;
+        y: (root.height - root.box-height) / 2;
+        width: root.box-width;
+        height: root.box-height;
+        background: T.bg;
+        TouchArea { }
+        Frame {
+            title: root.title;
+            tone: T.accent;
+            title-color: T.accent;
+            @children
         }
     }
 }
@@ -191,12 +154,12 @@ component AddTile inherits Rectangle {
 export component AppWindow inherits Window {
     title: "XBGG";
     icon: @image-url("../assets/icon.png");
-    background: Palette.bg;
+    background: T.bg;
     preferred-width: 1600px;
     preferred-height: 900px;
     min-width: 960px;
     min-height: 600px;
-    default-font-family: "Segoe UI";
+    default-font-family: "Cascadia Mono";
     forward-focus: keys;
 
     in property <[GameTile]> games;
@@ -204,9 +167,9 @@ export component AppWindow inherits Window {
     in property <string> clock;
     in property <string> status;
     in property <int> scanned-count;
-    // Background art for the focused entry, loaded lazily by Rust.
-    in property <image> hero;
-    in property <bool> has-hero;
+    // Cover of the focused entry, loaded by Rust at `cover-w` x `cover-h`.
+    in property <image> cover;
+    in property <bool> has-cover;
     in property <string> version;
     // Newer version available on GitHub ("" = none).
     in property <string> update-version;
@@ -215,14 +178,15 @@ export component AppWindow inherits Window {
     // 0 = none, 1 = confirm exit, 2 = confirm remove, 3 = confirm update
     in-out property <int> dialog: 0;
 
-    // Side panels: 0 = none, 1 = menu, 2 = apps to freeze.
+    // Panels: 0 = none, 1 = menu, 2 = apps to freeze.
     in-out property <int> panel: 0;
     in property <[MenuRow]> menu-rows;
     in-out property <int> menu-index: 0;
     in property <[AppRow]> app-rows;
     in-out property <int> app-index: 0;
-    // Top-bar summary while a boost is active ("" = no boost running).
+    // While a boost runs: what it did ("" = no boost running).
     in property <string> boost-chip;
+    in property <bool> boost-enabled;
 
     callback launch(int);
     callback add-program();
@@ -231,38 +195,55 @@ export component AppWindow inherits Window {
     callback quit();
     callback focused(int);
     callback install-update();
-    // Rust refreshes `menu-rows` / `app-rows` before a panel is shown.
     callback menu-open();
     callback menu-select(string);
     callback apps-open();
     callback app-toggle(int);
-    // Window or tile size changed: artwork must be re-prepared at the new size.
+    // Window size changed: the cover must be re-prepared at the new size.
     callback layout-changed();
 
-    // Exposed so Rust can prepare artwork at exactly the drawn size.
-    out property <length> tile-width: root.tile-w;
-    out property <length> tile-height: root.tile-h;
-    out property <length> tile-radius: 18px;
+    // ---------------------------------------------------------------- layout
+
+    property <length> fs: max(14px, min(28px, root.height / 54));
+    init => {
+        T.fs = root.fs;
+    }
+    changed fs => {
+        T.fs = root.fs;
+        root.layout-changed();
+    }
+
+    property <length> pad: T.fs * 1.2;
+    property <length> top-h: T.fs * 2;
+    property <length> foot-h: T.fs * 3.4;
+    property <length> body-y: root.pad + root.top-h + T.fs * 0.8;
+    property <length> body-h: root.height - root.body-y - root.foot-h - root.pad * 0.5;
+    property <length> list-w: (root.width - 3 * root.pad) * 0.56;
+    property <length> info-x: root.pad * 2 + root.list-w;
+    property <length> info-w: root.width - root.info-x - root.pad;
+
+    property <int> count: root.games.length + 1;
+    property <bool> on-add: root.selected >= root.games.length;
+    property <GameTile> current: root.games[root.selected];
+    property <int> rows-fit: max(1, floor((root.body-h - T.fs * 2) / T.row-h));
+    // First visible row; keeps the selection in view.
+    property <int> scroll: max(0, min(root.selected - floor(root.rows-fit / 2), root.count - root.rows-fit));
+
+    // Cover box: 2:3, as large as the info pane allows. Exposed so Rust can
+    // decode the image at exactly this size.
+    out property <length> cover-w: min(root.info-w - T.ch * 6, (root.body-h * 0.58) * 2 / 3);
+    out property <length> cover-h: root.cover-w * 1.5;
+    changed cover-w => {
+        root.layout-changed();
+    }
 
     changed selected => {
         root.focused(root.selected);
     }
-    changed tile-w => {
-        root.layout-changed();
-    }
-    changed width => {
-        root.layout-changed();
-    }
 
-    property <int> count: root.games.length + 1;
-    property <bool> on-add-tile: root.selected >= root.games.length;
-    property <GameTile> current: root.games[root.selected];
-    property <length> tile-h: root.height * 0.46;
-    property <length> tile-w: root.tile-h * 2 / 3;
-    property <length> gap: 26px;
-    property <length> pad: root.width * 0.06;
+    // ------------------------------------------------------------ navigation
 
-    // Nothing modal is open: the carousel has the input.
+    // Nothing modal is open: the library has the input.
     property <bool> idle: root.dialog == 0 && !root.input-blocked && root.panel == 0;
 
     public function nav(delta: int) {
@@ -271,7 +252,6 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Up/Down: moves inside the open panel.
     public function nav-vertical(delta: int) {
         if (root.dialog != 0 || root.input-blocked) {
             return;
@@ -280,6 +260,8 @@ export component AppWindow inherits Window {
             root.menu-index = max(0, min(root.menu-index + delta, root.menu-rows.length - 1));
         } else if (root.panel == 2) {
             root.app-index = max(0, min(root.app-index + delta, root.app-rows.length - 1));
+        } else {
+            root.nav(delta);
         }
     }
 
@@ -300,7 +282,7 @@ export component AppWindow inherits Window {
             root.menu-select(root.menu-rows[root.menu-index].id);
         } else if (root.panel == 2) {
             root.app-toggle(root.app-index);
-        } else if (root.on-add-tile) {
+        } else if (root.on-add) {
             root.add-program();
         } else {
             root.launch(root.selected);
@@ -324,7 +306,7 @@ export component AppWindow inherits Window {
     }
 
     public function secondary() {
-        if (root.idle && !root.on-add-tile) {
+        if (root.idle && !root.on-add) {
             root.dialog = 2;
         }
     }
@@ -341,7 +323,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Start / F2: opens the menu, or closes it again.
+    // Menu button / F2: opens the menu, or closes it again.
     public function menu() {
         if (root.dialog != 0 || root.input-blocked) {
             return;
@@ -382,11 +364,11 @@ export component AppWindow inherits Window {
                 return accept;
             }
             if (event.text == Key.PageUp || event.text == Key.Home) {
-                root.nav(event.text == Key.Home ? -10000 : -5);
+                root.nav(event.text == Key.Home ? -10000 : -root.rows-fit);
                 return accept;
             }
             if (event.text == Key.PageDown || event.text == Key.End) {
-                root.nav(event.text == Key.End ? 10000 : 5);
+                root.nav(event.text == Key.End ? 10000 : root.rows-fit);
                 return accept;
             }
             if (event.text == Key.Return || event.text == " ") {
@@ -409,8 +391,7 @@ export component AppWindow inherits Window {
                 root.refresh();
                 return accept;
             }
-            // F2 works with every keyboard layout (a letter key types "อ" on
-            // a Thai layout, for example); "u" is kept as a convenience.
+            // F2 works with every keyboard layout; "u" is a convenience.
             if (event.text == Key.F2 || event.text == "u" || event.text == "U") {
                 root.menu();
                 return accept;
@@ -419,106 +400,47 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Background art of the focused game.
-    property <bool> show-hero: root.has-hero && !root.on-add-tile;
+    // --------------------------------------------------------------- top bar
 
-    // Background art, pre-rendered at window size with dimming baked in.
-    if root.show-hero: Image {
-        width: 100%;
-        height: 100%;
-        source: root.hero;
-        image-fit: fill;
-    }
-
-    if !root.show-hero: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: @linear-gradient(135deg, root.on-add-tile ? #1b2a3a : root.current.accent.with-alpha(0.45) 0%, #07090d00 55%);
-    }
-
-    if !root.show-hero: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: @linear-gradient(180deg, #07090d55 0%, #07090dcc 55%, #07090d 100%);
-    }
-
-    // Top bar.
     HorizontalLayout {
         x: root.pad;
-        y: 32px;
+        y: root.pad * 0.6;
         width: root.width - 2 * root.pad;
-        height: 40px;
-        spacing: 16px;
+        height: root.top-h;
+        spacing: T.ch * 2;
         Text {
-            text: "XBGG";
-            color: Palette.text;
-            font-size: 26px;
-            font-weight: 900;
-            letter-spacing: 3px;
+            text: "xbgg";
+            color: T.accent;
+            font-size: T.fs * 1.15;
+            font-weight: 700;
             vertical-alignment: center;
         }
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 4px;
-            background: Palette.focus;
+        Text {
+            text: root.version;
+            color: T.dim;
+            font-size: T.fs;
+            vertical-alignment: center;
         }
         Text {
-            text: root.scanned-count + " in library";
-            color: Palette.muted;
-            font-size: 15px;
+            text: "│  " + root.scanned-count + " games";
+            color: T.dim;
+            font-size: T.fs;
             vertical-alignment: center;
+        }
+        Text {
+            text: "│  boost " + (root.boost-chip != "" ? root.boost-chip : (root.boost-enabled ? "armed" : "off"));
+            color: root.boost-chip != "" ? T.amber : T.dim;
+            font-size: T.fs;
+            font-weight: root.boost-chip != "" ? 700 : 400;
+            vertical-alignment: center;
+            overflow: elide;
         }
         Rectangle { }
-        if root.boost-chip != "": Rectangle {
-            border-radius: 15px;
-            background: #f5c84c26;
-            border-width: 1px;
-            border-color: #f5c84c90;
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                spacing: 10px;
-                Text {
-                    text: "BOOST";
-                    color: #f5c84c;
-                    font-size: 14px;
-                    font-weight: 800;
-                    letter-spacing: 1.5px;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.boost-chip;
-                    color: Palette.text;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-            }
-        }
-        if root.update-version != "": Rectangle {
-            border-radius: 15px;
-            background: #7cf5c42a;
-            border-width: 1px;
-            border-color: #7cf5c480;
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                spacing: 8px;
-                Text {
-                    text: "Update v" + root.update-version + " available";
-                    color: Palette.focus;
-                    font-size: 14px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Start / F2";
-                    color: Palette.muted;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-            }
+        if root.update-version != "": Text {
+            text: "update " + root.update-version + " available [≡]";
+            color: T.accent;
+            font-size: T.fs;
+            vertical-alignment: center;
             TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
@@ -527,378 +449,454 @@ export component AppWindow inherits Window {
             }
         }
         Text {
-            text: "v" + root.version;
-            color: Palette.muted;
-            font-size: 14px;
-            vertical-alignment: center;
-        }
-        Text {
             text: root.clock;
-            color: Palette.text;
-            font-size: 22px;
-            font-weight: 600;
+            color: T.bright;
+            font-size: T.fs;
             vertical-alignment: center;
         }
     }
 
-    // Title of the focused entry.
-    VerticalLayout {
-        x: root.pad;
-        y: root.height * 0.15;
-        width: root.width - 2 * root.pad;
-        alignment: start;
-        spacing: 12px;
-        Text {
-            text: root.on-add-tile ? "Add game or app" : root.current.title;
-            color: Palette.text;
-            font-size: min(56px, root.height * 0.06);
-            font-weight: 800;
-            overflow: elide;
-        }
-        HorizontalLayout {
-            alignment: start;
-            Badge {
-                text: root.on-add-tile ? "Pick an .exe, shortcut or script" : root.current.source;
-            }
-        }
-    }
-
-    // Carousel.
     Rectangle {
-        x: root.pad - root.selected * (root.tile-w + root.gap);
-        y: root.height * 0.34;
-        width: root.width;
-        height: root.tile-h + 30px;
-        animate x { duration: 240ms; easing: ease-out; }
-
-        for g[i] in root.games: Tile {
-            x: i * (root.tile-w + root.gap);
-            y: i == root.selected ? 0px : 22px;
-            width: root.tile-w;
-            height: root.tile-h;
-            game: g;
-            selected: i == root.selected;
-            animate y { duration: 180ms; easing: ease-out; }
-            clicked => {
-                if (root.selected == i) {
-                    root.activate();
-                } else {
-                    root.selected = i;
-                }
-            }
-        }
-
-        AddTile {
-            x: root.games.length * (root.tile-w + root.gap);
-            y: root.on-add-tile ? 0px : 22px;
-            width: root.tile-w;
-            height: root.tile-h;
-            selected: root.on-add-tile;
-            animate y { duration: 180ms; easing: ease-out; }
-            clicked => {
-                if (root.on-add-tile) {
-                    root.activate();
-                } else {
-                    root.selected = root.games.length;
-                }
-            }
-        }
-    }
-
-    // Bottom hints.
-    HorizontalLayout {
         x: root.pad;
-        y: root.height - 76px;
+        y: root.pad * 0.6 + root.top-h;
         width: root.width - 2 * root.pad;
-        height: 36px;
-        spacing: 28px;
-        Hint {
-            key: "A";
-            label: root.on-add-tile ? "Add" : "Play";
-            tint: Palette.btn-a;
-        }
-        Hint {
-            key: "X";
-            label: "Add app";
-            tint: Palette.btn-x;
-        }
-        Hint {
-            key: "Y";
-            label: "Remove";
-            tint: Palette.btn-y;
-        }
-        Hint {
-            key: "B";
-            label: "Exit";
-            tint: Palette.btn-b;
-        }
-        Hint {
-            key: "≡";
-            label: "Menu";
-            tint: #4a5263;
-        }
-        Rectangle { }
+        height: 1px;
+        background: T.line;
+    }
+
+    // --------------------------------------------------------------- library
+
+    lib := Frame {
+        x: root.pad;
+        y: root.body-y;
+        width: root.list-w;
+        height: root.body-h;
+        title: "library";
+
+        // column headers
+        property <length> col-src: self.width - T.ch * 22;
+        property <length> col-played: self.width - T.ch * 11;
         Text {
-            text: root.status != "" ? root.status : "Keyboard: ← →  Enter  Ins  Del  F5  F2 menu  Esc";
-            color: root.status != "" ? Palette.text : Palette.muted;
-            font-size: 15px;
-            vertical-alignment: center;
+            x: T.ch * 2;
+            y: T.fs * 0.9;
+            text: "  title";
+            color: T.dim;
+            font-size: T.fs * 0.85;
+        }
+        Text {
+            x: lib.col-src;
+            y: T.fs * 0.9;
+            text: "source";
+            color: T.dim;
+            font-size: T.fs * 0.85;
+        }
+        Text {
+            x: lib.col-played;
+            y: T.fs * 0.9;
+            width: T.ch * 9;
+            text: "played";
+            color: T.dim;
+            font-size: T.fs * 0.85;
             horizontal-alignment: right;
-            overflow: elide;
-        }
-    }
-
-    // Side panel: menu (1) or apps to freeze (2).
-    if root.panel != 0: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #000000a0;
-
-        TouchArea {
-            clicked => {
-                root.panel = 0;
-            }
         }
 
-        drawer := Rectangle {
-            property <length> row-h: 62px;
-            property <length> head-h: root.panel == 2 ? 150px : 110px;
-            property <int> rows-fit: max(1, floor((self.height - self.head-h - 90px) / self.row-h));
-            // First visible app row, keeping the focused one in view.
-            property <int> app-scroll: max(0, min(root.app-index - floor(self.rows-fit / 2), root.app-rows.length - self.rows-fit));
+        rows := Rectangle {
+            x: 1px;
+            y: T.fs * 2.4;
+            width: parent.width - 2px;
+            height: root.rows-fit * T.row-h;
+            clip: true;
 
-            x: root.width - self.width;
-            width: min(600px, root.width * 0.42);
-            height: 100%;
-            background: Palette.panel;
-            border-width: 1px;
-            border-color: #ffffff18;
-
-            TouchArea { }
-
-            VerticalLayout {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: drawer.head-h;
-                padding-left: 36px;
-                padding-right: 36px;
-                padding-top: 40px;
-                spacing: 8px;
-                alignment: start;
+            for g[i] in root.games: game-row := Rectangle {
+                y: (i - root.scroll) * T.row-h;
+                height: T.row-h;
+                visible: i >= root.scroll && i < root.scroll + root.rows-fit;
+                property <bool> sel: i == root.selected;
+                background: self.sel ? T.accent : transparent;
                 Text {
-                    text: root.panel == 1 ? "Menu" : "Apps to freeze";
-                    color: Palette.text;
-                    font-size: 30px;
-                    font-weight: 800;
-                }
-                if root.panel == 2: Text {
-                    text: "Frozen while a game runs and resumed when it closes. Nothing is closed and no work is lost.";
-                    color: Palette.muted;
-                    font-size: 14px;
-                    wrap: word-wrap;
-                }
-            }
-
-            // Menu rows.
-            if root.panel == 1: Rectangle {
-                y: drawer.head-h;
-                height: parent.height - drawer.head-h;
-                for row[i] in root.menu-rows: Rectangle {
-                    y: i * drawer.row-h;
-                    height: drawer.row-h;
-                    background: i == root.menu-index ? #ffffff14 : transparent;
-                    Rectangle {
-                        x: 0;
-                        width: 4px;
-                        background: i == root.menu-index ? Palette.focus : transparent;
-                    }
-                    Text {
-                        x: 36px;
-                        width: parent.width - 200px;
-                        text: row.label;
-                        color: row.dim ? Palette.muted : Palette.text;
-                        font-size: 18px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                    if row.value != "": Rectangle {
-                        x: parent.width - self.width - 36px;
-                        y: (parent.height - self.height) / 2;
-                        height: 30px;
-                        width: value-text.preferred-width + 28px;
-                        border-radius: 15px;
-                        background: row.on ? #7cf5c430 : #ffffff12;
-                        value-text := Text {
-                            text: row.value;
-                            color: row.on ? Palette.focus : Palette.muted;
-                            font-size: 14px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.menu-index = i;
-                            root.activate();
-                        }
-                    }
-                }
-            }
-
-            // App rows (scrolls with the focus).
-            if root.panel == 2: Rectangle {
-                y: drawer.head-h;
-                height: drawer.rows-fit * drawer.row-h;
-                clip: true;
-                for row[i] in root.app-rows: Rectangle {
-                    y: (i - drawer.app-scroll) * drawer.row-h;
-                    height: drawer.row-h;
-                    visible: i >= drawer.app-scroll && i < drawer.app-scroll + drawer.rows-fit;
-                    background: i == root.app-index ? #ffffff14 : transparent;
-                    Rectangle {
-                        x: 0;
-                        width: 4px;
-                        background: i == root.app-index ? Palette.focus : transparent;
-                    }
-                    Rectangle {
-                        x: 36px;
-                        y: (parent.height - self.height) / 2;
-                        width: 26px;
-                        height: 26px;
-                        border-radius: 7px;
-                        border-width: 2px;
-                        border-color: row.on ? Palette.focus : #ffffff50;
-                        background: row.on ? Palette.focus : transparent;
-                        Text {
-                            text: row.on ? "✓" : "";
-                            color: Palette.bg;
-                            font-size: 16px;
-                            font-weight: 900;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                    VerticalLayout {
-                        x: 80px;
-                        width: parent.width - 116px;
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: row.name;
-                            color: Palette.text;
-                            font-size: 17px;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: row.detail;
-                            color: Palette.muted;
-                            font-size: 13px;
-                            overflow: elide;
-                        }
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.app-index = i;
-                            root.activate();
-                        }
-                    }
-                }
-            }
-
-            // Panel hints.
-            HorizontalLayout {
-                x: 36px;
-                y: parent.height - 70px;
-                width: parent.width - 72px;
-                height: 36px;
-                spacing: 28px;
-                alignment: start;
-                Hint {
-                    key: "A";
-                    label: root.panel == 2 ? "Toggle" : "Select";
-                    tint: Palette.btn-a;
-                }
-                Hint {
-                    key: "B";
-                    label: "Back";
-                    tint: Palette.btn-b;
-                }
-                if root.panel == 2: Text {
-                    text: (root.app-index + 1) + " / " + root.app-rows.length;
-                    color: Palette.muted;
-                    font-size: 14px;
+                    x: T.ch * 2;
+                    width: lib.col-src - T.ch * 3;
+                    height: 100%;
+                    text: (game-row.sel ? "› " : "  ") + g.title;
+                    color: game-row.sel ? T.bg : T.fg;
+                    font-size: T.fs;
+                    font-weight: game-row.sel ? 700 : 400;
                     vertical-alignment: center;
-                }
-            }
-        }
-    }
-
-    // Confirmation dialog.
-    if root.dialog != 0: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #000000b8;
-
-        TouchArea {
-            clicked => {
-                root.dialog = 0;
-            }
-        }
-
-        Rectangle {
-            width: min(560px, root.width - 48px);
-            height: 230px;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            background: Palette.panel;
-            border-radius: 20px;
-            border-width: 1px;
-            border-color: #ffffff22;
-
-            TouchArea { }
-
-            VerticalLayout {
-                padding: 32px;
-                spacing: 14px;
-                Text {
-                    text: root.dialog == 1 ? "Exit XBGG?"
-                        : root.dialog == 3 ? "Update to v" + root.update-version + "?"
-                        : "Remove \"" + root.current.title + "\"?";
-                    color: Palette.text;
-                    font-size: 26px;
-                    font-weight: 800;
                     overflow: elide;
                 }
                 Text {
-                    text: root.dialog == 1
-                        ? "You'll go back to the Windows desktop."
-                        : root.dialog == 3
-                        ? "XBGG downloads the release from GitHub, verifies its SHA-256 checksum and restarts."
-                        : (root.current.source == "Custom"
-                            ? "It is removed from XBGG only. No files are deleted."
-                            : "It is hidden from XBGG only. The game stays installed.");
-                    color: Palette.muted;
-                    font-size: 16px;
-                    wrap: word-wrap;
+                    x: lib.col-src;
+                    width: T.ch * 9;
+                    height: 100%;
+                    text: g.source;
+                    color: game-row.sel ? T.bg : T.dim;
+                    font-size: T.fs;
+                    vertical-alignment: center;
                 }
-                Rectangle { }
-                HorizontalLayout {
-                    alignment: start;
-                    spacing: 28px;
-                    Hint {
-                        key: "A";
-                        label: "Confirm (Enter)";
-                        tint: Palette.btn-a;
+                Text {
+                    x: lib.col-played;
+                    width: T.ch * 9;
+                    height: 100%;
+                    text: g.played;
+                    color: game-row.sel ? T.bg : T.dim;
+                    font-size: T.fs;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.selected == i) {
+                            root.activate();
+                        } else {
+                            root.selected = i;
+                        }
                     }
-                    Hint {
-                        key: "B";
-                        label: "Cancel (Esc)";
-                        tint: Palette.btn-b;
+                }
+            }
+
+            // "+ add game or app" — always the last row.
+            add-row := Rectangle {
+                property <int> i: root.games.length;
+                property <bool> sel: root.on-add;
+                y: (self.i - root.scroll) * T.row-h;
+                height: T.row-h;
+                visible: self.i >= root.scroll && self.i < root.scroll + root.rows-fit;
+                background: self.sel ? T.accent : transparent;
+                Text {
+                    x: T.ch * 2;
+                    height: 100%;
+                    text: (add-row.sel ? "› " : "  ") + "+ add game or app";
+                    color: add-row.sel ? T.bg : T.dim;
+                    font-size: T.fs;
+                    font-weight: add-row.sel ? 700 : 400;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        if (root.on-add) {
+                            root.activate();
+                        } else {
+                            root.selected = root.games.length;
+                        }
                     }
+                }
+            }
+        }
+
+        // scroll position, bottom right of the frame
+        Text {
+            x: parent.width - self.preferred-width - T.ch * 2;
+            y: parent.height - T.fs * 1.5;
+            text: (root.selected + 1) + "/" + root.count;
+            color: T.dim;
+            font-size: T.fs * 0.85;
+        }
+    }
+
+    // ----------------------------------------------------------------- info
+
+    info := Frame {
+        x: root.info-x;
+        y: root.body-y;
+        width: root.info-w;
+        height: root.body-h;
+        title: root.on-add ? "add" : "details";
+
+        property <length> left: T.ch * 3;
+        property <length> text-y: T.fs * 1.6 + root.cover-h + T.fs * 1.4;
+
+        // cover
+        Rectangle {
+            x: info.left;
+            y: T.fs * 1.6;
+            width: root.cover-w;
+            height: root.cover-h;
+            border-width: 1px;
+            border-color: T.line;
+            if root.has-cover && !root.on-add: Image {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                source: root.cover;
+                image-fit: fill;
+            }
+            if !root.has-cover || root.on-add: Text {
+                width: 100%;
+                height: 100%;
+                text: root.on-add ? "+" : "no cover";
+                color: T.line;
+                font-size: root.on-add ? T.fs * 4 : T.fs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // details
+        VerticalLayout {
+            x: info.left;
+            y: info.text-y;
+            width: info.width - info.left * 2;
+            spacing: T.fs * 0.35;
+            alignment: start;
+            Text {
+                text: root.on-add ? "add a game or app" : root.current.title;
+                color: T.bright;
+                font-size: T.fs * 1.35;
+                font-weight: 700;
+                overflow: elide;
+            }
+            if root.on-add: Text {
+                text: "pick any .exe, shortcut (.lnk .url) or script (.bat .cmd)";
+                color: T.fg;
+                font-size: T.fs;
+                wrap: word-wrap;
+            }
+            if !root.on-add: Kv {
+                k: "source";
+                v: root.current.source + (root.current.detail != "" ? "  " + root.current.detail : "");
+            }
+            if !root.on-add: Kv {
+                k: "played";
+                v: root.current.played;
+            }
+            if !root.on-add: Kv {
+                k: "path";
+                v: root.current.path;
+            }
+            Rectangle {
+                height: T.fs * 0.6;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Key {
+                    k: "A";
+                    label: root.on-add ? "browse…" : "play";
+                    hot: true;
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------------- footer
+
+    VerticalLayout {
+        x: root.pad;
+        y: root.height - root.foot-h - root.pad * 0.3;
+        width: root.width - 2 * root.pad;
+        height: root.foot-h;
+        spacing: T.fs * 0.3;
+        alignment: center;
+        HorizontalLayout {
+            spacing: T.ch * 3;
+            alignment: start;
+            height: T.fs * 1.4;
+            Key {
+                k: "A";
+                label: root.panel == 2 ? "toggle" : (root.panel == 1 ? "select" : (root.on-add ? "add" : "play"));
+            }
+            if root.panel == 0: Key {
+                k: "X";
+                label: "add";
+            }
+            if root.panel == 0: Key {
+                k: "Y";
+                label: "remove";
+            }
+            Key {
+                k: "≡";
+                label: "menu";
+            }
+            Key {
+                k: "B";
+                label: root.panel == 0 ? "exit" : "back";
+            }
+        }
+        Text {
+            text: root.status != "" ? "> " + root.status : "  ↑↓ move · enter play · ins add · del remove · f2 menu · f5 rescan · esc exit";
+            color: root.status != "" ? T.fg : T.dim;
+            font-size: T.fs * 0.85;
+            overflow: elide;
+        }
+    }
+
+    // ----------------------------------------------------------------- menu
+
+    if root.panel == 1: menu-box := Modal {
+        width: 100%;
+        height: 100%;
+        title: "menu";
+        box-width: min(root.width - 4 * root.pad, T.ch * 64);
+        box-height: T.fs * 4 + root.menu-rows.length * T.row-h;
+        dismissed => {
+            root.panel = 0;
+        }
+
+        for row[i] in root.menu-rows: menu-row := Rectangle {
+            x: 1px;
+            y: T.fs * 1.6 + i * T.row-h;
+            width: menu-box.box-width - 2px;
+            height: T.row-h;
+            property <bool> sel: i == root.menu-index;
+            property <bool> toggle: row.value == "On" || row.value == "Off";
+            background: self.sel ? T.accent : transparent;
+            Text {
+                x: T.ch * 2;
+                height: 100%;
+                text: (menu-row.toggle ? (row.on ? "[x] " : "[ ] ") : "    ") + row.label;
+                color: menu-row.sel ? T.bg : (row.dim ? T.dim : T.fg);
+                font-size: T.fs;
+                font-weight: menu-row.sel ? 700 : 400;
+                vertical-alignment: center;
+            }
+            if !menu-row.toggle && row.value != "": Text {
+                x: menu-row.width - self.preferred-width - T.ch * 2;
+                height: 100%;
+                text: row.value;
+                color: menu-row.sel ? T.bg : (row.on ? T.amber : T.dim);
+                font-size: T.fs;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.menu-index = i;
+                    root.activate();
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------- apps to freeze
+
+    if root.panel == 2: apps := Modal {
+        width: 100%;
+        height: 100%;
+        title: "apps to freeze";
+        box-width: min(root.width - 4 * root.pad, T.ch * 76);
+        box-height: root.body-h;
+        dismissed => {
+            root.panel = 0;
+        }
+
+        property <length> head: T.fs * 4.2;
+        property <int> fit: max(1, floor((self.box-height - self.head - T.fs * 2) / T.row-h));
+        property <int> top: max(0, min(root.app-index - floor(self.fit / 2), root.app-rows.length - self.fit));
+
+        Text {
+            x: T.ch * 2;
+            y: T.fs * 1.4;
+            width: apps.box-width - T.ch * 4;
+            text: "frozen while a game runs, resumed when it closes. nothing is closed, no work is lost.";
+            color: T.dim;
+            font-size: T.fs * 0.85;
+            wrap: word-wrap;
+        }
+
+        Rectangle {
+            x: 1px;
+            y: apps.head;
+            width: apps.box-width - 2px;
+            height: apps.fit * T.row-h;
+            clip: true;
+            for row[i] in root.app-rows: app-row := Rectangle {
+                y: (i - apps.top) * T.row-h;
+                height: T.row-h;
+                visible: i >= apps.top && i < apps.top + apps.fit;
+                property <bool> sel: i == root.app-index;
+                background: self.sel ? T.accent : transparent;
+                Text {
+                    x: T.ch * 2;
+                    width: T.ch * 40;
+                    height: 100%;
+                    text: (row.on ? "[x] " : "[ ] ") + row.name;
+                    color: app-row.sel ? T.bg : T.fg;
+                    font-size: T.fs;
+                    font-weight: app-row.sel ? 700 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    x: app-row.width - self.width - T.ch * 2;
+                    width: T.ch * 30;
+                    height: 100%;
+                    text: row.detail;
+                    color: app-row.sel ? T.bg : T.dim;
+                    font-size: T.fs;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.app-index = i;
+                        root.activate();
+                    }
+                }
+            }
+        }
+
+        Text {
+            x: apps.box-width - self.preferred-width - T.ch * 2;
+            y: apps.box-height - T.fs * 1.6;
+            text: (root.app-index + 1) + "/" + root.app-rows.length;
+            color: T.dim;
+            font-size: T.fs * 0.85;
+        }
+    }
+
+    // ---------------------------------------------------------- confirmation
+
+    if root.dialog != 0: dialog-box := Modal {
+        width: 100%;
+        height: 100%;
+        title: root.dialog == 1 ? "exit" : (root.dialog == 3 ? "update" : "remove");
+        box-width: min(root.width - 4 * root.pad, T.ch * 62);
+        box-height: T.fs * 8.4;
+        dismissed => {
+            root.dialog = 0;
+        }
+
+        VerticalLayout {
+            x: T.ch * 3;
+            y: T.fs * 1.6;
+            width: dialog-box.box-width - T.ch * 6;
+            spacing: T.fs * 0.6;
+            alignment: start;
+            Text {
+                text: root.dialog == 1 ? "exit xbgg?"
+                    : root.dialog == 3 ? "update to " + root.update-version + "?"
+                    : "remove \"" + root.current.title + "\"?";
+                color: T.bright;
+                font-size: T.fs * 1.15;
+                font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: root.dialog == 1
+                    ? "back to the windows desktop."
+                    : root.dialog == 3
+                    ? "downloads the release from github, verifies its sha-256 and restarts."
+                    : (root.current.source == "custom"
+                        ? "removed from xbgg only. no files are deleted."
+                        : "hidden from xbgg only. the game stays installed.");
+                color: T.dim;
+                font-size: T.fs;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: T.ch * 3;
+                alignment: start;
+                Key {
+                    k: "A";
+                    label: "confirm (enter)";
+                    hot: true;
+                }
+                Key {
+                    k: "B";
+                    label: "cancel (esc)";
                 }
             }
         }
