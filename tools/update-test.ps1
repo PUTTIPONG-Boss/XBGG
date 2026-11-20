@@ -29,6 +29,7 @@ Log "old binary sha256 $before"
 
 $result = 'FAIL'
 $procs = @()
+$noBoost = Disable-XbggBoost
 try {
     # CLI check first.
     $env:XBGG_PRETEND_VERSION = $PretendVersion
@@ -41,7 +42,8 @@ try {
     $procs += $p
     $h = Wait-MainWindow $p
     Start-Sleep -Seconds 6               # startup update check
-    Send-Key $h F2 1 300                 # open the update dialog
+    Send-Key $h F2 1 400                 # open the menu ("Install update" is the first row)
+    Send-Key $h Enter 1 400              # choose it: opens the confirmation
     Send-Key $h Enter 1 100              # confirm
     Log 'update confirmed in the UI'
 
@@ -73,5 +75,6 @@ finally {
     Get-Process xbgg -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target } | Stop-Process -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    Restore-XbggConfig $noBoost
 }
 Log "RESULT: $result"

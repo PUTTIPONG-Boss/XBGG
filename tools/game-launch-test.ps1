@@ -36,6 +36,10 @@ for ($i = 0; $i -lt $list.Count; $i++) { if ($list[$i] -match "^\S+\s+$([regex]:
 if ($index -lt 0) { throw "'$Title' not found in XBGG library" }
 Log "'$Title' is entry #$index"
 
+# Measures XBGG alone: Boost must not freeze the user's real apps here
+# (tools/boost-test.ps1 covers Boost).
+$noBoost = Disable-XbggBoost
+trap { Restore-XbggConfig $noBoost; break }
 $x = Start-Process (Resolve-Path $Exe) -PassThru
 $h = Wait-MainWindow $x
 Start-Sleep -Seconds 3
@@ -102,5 +106,6 @@ $x.Refresh()
 Log "XBGG still running: $(-not $x.HasExited)"
 Stop-Process -Id $x.Id
 
+Restore-XbggConfig $noBoost
 $after = Get-XbggList | Select-Object -First 1
 Log "first entry after launch (recently played first): $after"

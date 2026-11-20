@@ -66,6 +66,7 @@ pub fn scan() -> Result<Vec<Game>> {
             cover: None,
             hero: None,
             last_played: None,
+            install_dir: m.install_location.map(PathBuf::from),
         });
     }
     Ok(games)

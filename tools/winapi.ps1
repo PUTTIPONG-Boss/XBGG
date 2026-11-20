@@ -45,7 +45,24 @@ if (Get-Process xbgg -ErrorAction SilentlyContinue) {
     throw "xbgg.exe is already running (pid $((Get-Process xbgg).Id -join ', ')); close it before testing"
 }
 
-$script:VK = @{ Left = 0x25; Right = 0x27; Enter = 0x0D; Esc = 0x1B; Del = 0x2E; Ins = 0x2D; F5 = 0x74; F2 = 0x71; End = 0x23; Home = 0x24; U = 0x55 }
+# Tests that launch something must not freeze the user's real apps: back up
+# library.json and switch Boost off. Returns the backup path for Restore-XbggConfig.
+function Disable-XbggBoost {
+    $cfg = Join-Path $env:APPDATA 'XBGG\library.json'
+    $bak = "$cfg.noboost-$PID"
+    if (-not (Test-Path $cfg)) { return $null }
+    Copy-Item $cfg $bak -Force
+    $j = Get-Content $cfg -Raw | ConvertFrom-Json
+    if ($j.PSObject.Properties.Name -contains 'boost') { $j.boost.enabled = $false }
+    else { $j | Add-Member -NotePropertyName boost -NotePropertyValue ([pscustomobject]@{ enabled = $false }) }
+    [IO.File]::WriteAllText($cfg, ($j | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding $false))
+    $bak
+}
+function Restore-XbggConfig($bak) {
+    if ($bak -and (Test-Path $bak)) { Move-Item $bak (Join-Path $env:APPDATA 'XBGG\library.json') -Force }
+}
+
+$script:VK = @{ Left = 0x25; Right = 0x27; Up = 0x26; Down = 0x28; Enter = 0x0D; Esc = 0x1B; Del = 0x2E; Ins = 0x2D; F5 = 0x74; F2 = 0x71; End = 0x23; Home = 0x24; U = 0x55 }
 
 function Send-Key([IntPtr]$hwnd, [string]$name, [int]$times = 1, [int]$delayMs = 60) {
     $vk = $script:VK[$name]

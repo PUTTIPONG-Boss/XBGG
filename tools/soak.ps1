@@ -24,6 +24,12 @@ for ($c = 1; $c -le $Cycles; $c++) {
     Send-Key $h Esc 1 40          # cancel it
     Send-Key $h Del 1 40          # open remove dialog
     Send-Key $h Esc 1 40          # cancel it
+    Send-Key $h F2 1 60           # open the menu
+    Send-Key $h Down 2 40         # "Apps to freeze"
+    Send-Key $h Enter 1 150       # opens the list (enumerates every process)
+    Send-Key $h Down 3 40
+    Send-Key $h Esc 1 60          # back to the menu
+    Send-Key $h Esc 1 60          # close the menu
     if ($c % 5 -eq 0) { Send-Key $h F5 1 150 }   # full rescan + artwork reload
     Start-Sleep -Milliseconds 250
     if ($p.HasExited) { throw "XBGG exited during cycle $c (code $($p.ExitCode))" }

@@ -44,6 +44,8 @@ function Find-Dialog([uint32]$procId) {
 $config = Join-Path $env:APPDATA 'XBGG\library.json'
 $backup = "$config.testbackup"
 if (Test-Path $config) { Copy-Item $config $backup -Force }
+# Launching winver must not start a Boost on the user's real apps.
+$noBoost = Disable-XbggBoost; if ($noBoost) { Remove-Item $noBoost }
 $name = [IO.Path]::GetFileNameWithoutExtension($Program)
 $result = 'FAIL'
 try {

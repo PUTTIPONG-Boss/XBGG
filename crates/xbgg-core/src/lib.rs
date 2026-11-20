@@ -1,5 +1,6 @@
 //! XBGG core: finds installed games, keeps the user's library and launches entries.
 
+pub mod boost;
 pub mod launch;
 pub mod model;
 pub mod scan;
@@ -131,10 +132,11 @@ impl Library {
         Ok(())
     }
 
-    /// Starts the entry and records the launch time.
-    pub fn launch(&mut self, index: usize) -> Result<&Game> {
+    /// Starts the entry and records the launch time. Also returns the process
+    /// ID when XBGG started the process itself.
+    pub fn launch(&mut self, index: usize) -> Result<(&Game, Option<u32>)> {
         let Some(game) = self.games.get(index) else { bail!("No entry at index {index}") };
-        launch::launch(&game.launch)?;
+        let pid = launch::launch(&game.launch)?;
 
         let now = now_unix();
         let id = game.id.clone();
@@ -144,7 +146,22 @@ impl Library {
         }
         let game = &mut self.games[index];
         game.last_played = Some(now);
-        Ok(game)
+        Ok((game, pid))
+    }
+
+    pub fn boost(&self) -> &boost::BoostConfig {
+        &self.config.boost
+    }
+
+    /// Changes the boost settings and saves them.
+    pub fn update_boost(&mut self, change: impl FnOnce(&mut boost::BoostConfig)) -> Result<()> {
+        let before = self.config.boost.clone();
+        change(&mut self.config.boost);
+        if let Err(e) = self.save() {
+            self.config.boost = before;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Re-sorts after launches so recently played entries come first.
@@ -166,7 +183,8 @@ impl Library {
 
 fn custom_to_game(c: &CustomEntry) -> Game {
     let ext = c.path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let launch = if ext == "exe" {
+    let is_exe = ext == "exe";
+    let launch = if is_exe {
         LaunchTarget::Exe { path: c.path.clone(), args: c.args.clone(), working_dir: None }
     } else {
         LaunchTarget::Shell(c.path.clone())
@@ -179,6 +197,8 @@ fn custom_to_game(c: &CustomEntry) -> Game {
         cover: None,
         hero: None,
         last_played: None,
+        // Shortcuts point elsewhere; only a direct .exe tells us the folder.
+        install_dir: is_exe.then(|| c.path.parent().map(|p| p.to_path_buf())).flatten(),
     }
 }
 

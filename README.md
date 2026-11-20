@@ -26,11 +26,45 @@ CPU while you play.
 - **Controller first** — Xbox-style controllers, keyboard and mouse all work.
   Input is ignored while a game is in front, so button presses in-game never
   reach the launcher.
+- **Boost while playing** — frees RAM and CPU for the game by freezing the
+  background apps you choose, switches Windows to Best performance, and puts
+  everything back when you quit the game. See [Boost](#boost).
 - **Built to stay out of the way** — see [Performance](#performance).
 - **Safe in-app updates** — new versions are downloaded from GitHub Releases,
   verified with SHA-256 and installed only after you confirm.
 - **Recently played first**, hide what you don't want, nothing on disk is ever
   deleted.
+
+## Boost
+
+When you launch a game from XBGG, Boost hands the machine over to the game and
+gives it back when you're done.
+
+| What | How | Default |
+|---|---|---|
+| **Freeze background apps** | Suspends the apps you pick and releases their RAM. Nothing is closed: they resume exactly where they were — tabs, documents, everything. | On: browsers, Wallpaper Engine, Teams, Slack, OneDrive, Dropbox, Widgets, Adobe helpers |
+| **Best performance power mode** | Switches Windows' power mode slider, restores your previous mode afterwards. | On |
+| **High priority for games** | Raises the game's process priority; re-applies it if the game resets it while loading. | Off |
+
+![XBGG menu](docs/menu.jpg)
+
+- **Choose what gets frozen** in *Menu → Apps to freeze*: every app with a
+  window is listed with its live memory use. Discord, Spotify and OBS are
+  offered but off by default, since many people use them while playing.
+- **Never frozen**, even if listed: Windows components, game launchers (Steam,
+  Epic, GOG, Battle.net, EA, Ubisoft, Riot, Xbox) and anti-cheat services.
+- **Ends automatically** about 2 seconds after the game exits, or from
+  *Menu → End boost now*.
+- **Crash-safe**: every change is written to a journal *before* it's made. If
+  XBGG is killed, a small guard process restores everything immediately; after
+  a power cut, XBGG restores it on the next start. `xbgg --restore` does it by
+  hand.
+- **Anti-cheat friendly**: Boost never touches the game's memory or code — it
+  only suspends *other* apps and, if enabled, sets the game's priority class.
+
+In testing, freezing an app holding 1.5 GB released **1.4 GB of RAM** to the
+game within two seconds, and everything resumed **2.4 s** after the game
+closed ([details](docs/TEST_REPORT.md#boost)).
 
 ## Performance
 
@@ -38,7 +72,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 1920×1080, 7-game library, release build. Full method and raw results:
 [docs/TEST_REPORT.md](docs/TEST_REPORT.md).
 
-| Metric | XBGG v0.1.1 |
+| Metric | XBGG v0.2.0 |
 |---|---|
 | GPU memory (VRAM) | **0 MB** — UI is rendered on the CPU; a laptop's discrete GPU is never woken |
 | Private memory | ~26 MB |
@@ -46,6 +80,7 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 | CPU while idle in the menu | ~0% |
 | Startup to window | ~0.3 s |
 | Memory after 500 navigate/dialog/rescan cycles | flat — no leaks |
+| CPU while boosting a running game | ~0% (31 ms over 30 s during the game's first minute, then 0) |
 
 ## Install
 
@@ -65,13 +100,13 @@ Measured on an Intel Core i5 12th gen laptop with RTX 3050 Laptop GPU,
 
 | Controller | Keyboard | Action |
 |---|---|---|
-| D-pad / left stick | ← → | Move |
+| D-pad / left stick | ← → (↑ ↓ in menus) | Move |
 | LB / RB | Page Up / Page Down | Jump 5 |
 | A | Enter / Space | Play / Add |
 | X | Insert | Add game or app |
 | Y | Delete | Remove (custom) / Hide (scanned) |
 | View | F5 | Rescan library |
-| Menu | F2 | Install available update |
+| Menu | F2 | Menu: Boost settings, apps to freeze, update, rescan, exit |
 | B | Esc / Backspace | Back / Exit (asks first) |
 
 Mouse: click a tile to focus it, click again to play.
@@ -88,6 +123,7 @@ xbgg [OPTIONS]
   --no-update      Skip the update check on startup
   --list           Print the detected game library and exit
   --check-update   Check GitHub for a newer release and exit
+  --restore        Unfreeze apps left frozen by an interrupted boost and exit
   --version        Print the version and exit
   --help           Show help
 ```
@@ -95,8 +131,10 @@ xbgg [OPTIONS]
 ## Data & privacy
 
 - Settings live in `%APPDATA%\XBGG\library.json` (custom entries, hidden
-  entries, last-played times). To un-hide a game, remove its id from `hidden`
-  and press F5.
+  entries, last-played times, Boost settings). To un-hide a game, remove its
+  id from `hidden` and press F5.
+- While a boost runs, `%APPDATA%\XBGG\boost-journal.json` records what was
+  changed; it is deleted when everything is restored.
 - The only network request is a check of this repository's latest GitHub
   release at startup (disable with `--no-update`). No telemetry.
 - If XBGG ever crashes, the reason is appended to `%APPDATA%\XBGG\crash.log`.
@@ -114,23 +152,24 @@ cargo test                   # unit tests
 
 Repeatable performance and end-to-end tests live in [`tools/`](tools):
 `bench.ps1`, `soak.ps1` (leaks), `focus-soak.ps1`, `custom-entry-test.ps1`,
-`game-launch-test.ps1` and `update-test.ps1`. `package.ps1` builds the release
-assets into `dist\`.
+`game-launch-test.ps1`, `boost-test.ps1` and `update-test.ps1`. `package.ps1`
+builds the release assets into `dist\`.
 
 ## Project layout
 
 ```text
 crates/
-  xbgg-core/   store scanners (Steam/Epic/GOG), library storage, launching
-  xbgg/        Slint UI, artwork pipeline, XInput, updater, Win32 glue
+  xbgg-core/   store scanners (Steam/Epic/GOG), library storage, launching,
+               Boost (freeze/restore, power mode, priority, journal)
+  xbgg/        Slint UI, artwork pipeline, XInput, updater, boost session, Win32 glue
 tools/         benchmark, soak and end-to-end test scripts
 docs/          test report, screenshots
 ```
 
 ## Roadmap
 
-- **Boost mode** — pause background apps and services, switch power plan and
-  game priority while playing, with a crash-safe restore journal.
+- **Windows services** — pause Search indexing, SysMain and Delivery
+  Optimization while playing (needs a small, opt-in admin helper).
 - **Shell mode** — boot straight into XBGG instead of the desktop.
 - **Resource report** — show how much RAM/VRAM/CPU was handed back to the game.
 - More stores (Xbox / Game Pass, EA app, Ubisoft Connect, Battle.net).

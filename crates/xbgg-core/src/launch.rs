@@ -7,7 +7,9 @@ use crate::model::LaunchTarget;
 /// Windows error: "The requested operation requires elevation."
 const ERROR_ELEVATION_REQUIRED: i32 = 740;
 
-pub fn launch(target: &LaunchTarget) -> Result<()> {
+/// Starts the target. Returns the process ID when we started the process
+/// ourselves (direct executables); launcher URIs and shortcuts don't tell us.
+pub fn launch(target: &LaunchTarget) -> Result<Option<u32>> {
     match target {
         LaunchTarget::Uri(uri) => {
             open::that_detached(uri).with_context(|| format!("opening {uri}"))?;
@@ -23,7 +25,7 @@ pub fn launch(target: &LaunchTarget) -> Result<()> {
                 cmd.current_dir(dir);
             }
             match cmd.spawn() {
-                Ok(_child) => {}
+                Ok(child) => return Ok(Some(child.id())),
                 // Executables that demand admin rights cannot be started with
                 // CreateProcess; ShellExecute shows the UAC prompt instead.
                 Err(e) if e.raw_os_error() == Some(ERROR_ELEVATION_REQUIRED) && args.is_empty() => {
@@ -33,5 +35,5 @@ pub fn launch(target: &LaunchTarget) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(None)
 }

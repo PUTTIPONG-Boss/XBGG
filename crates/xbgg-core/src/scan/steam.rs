@@ -69,6 +69,7 @@ pub fn scan() -> Result<Vec<Game>> {
 }
 
 fn read_manifest(path: &Path, cache: &Path) -> Option<Game> {
+    let steamapps = path.parent()?;
     let text = fs::read_to_string(path).ok()?;
     let doc = vdf::parse(&text).ok()?;
     let app = doc.get("AppState")?;
@@ -98,6 +99,7 @@ fn read_manifest(path: &Path, cache: &Path) -> Option<Game> {
         cover: find_art(cache, &appid, &["library_600x900.jpg", "library_capsule.jpg"]),
         hero: find_art(cache, &appid, &["library_hero.jpg"]),
         last_played,
+        install_dir: app.str("installdir").map(|d| steamapps.join("common").join(d)),
     })
 }
 

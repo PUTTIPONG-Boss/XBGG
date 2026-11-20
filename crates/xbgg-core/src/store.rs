@@ -25,6 +25,7 @@ pub struct Config {
     pub hidden: Vec<String>,
     /// Unix seconds of the last launch from XBGG, by game id.
     pub last_played: BTreeMap<String, u64>,
+    pub boost: crate::boost::BoostConfig,
 }
 
 pub fn default_path() -> Option<PathBuf> {

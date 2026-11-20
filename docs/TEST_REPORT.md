@@ -1,12 +1,76 @@
-# XBGG v0.1.1 — Test Report
+# XBGG — Test Report
 
 Date: 2026-11-20 · Build: `release` profile (thin LTO, `opt-level = 3`), Rust 1.99.0,
-`x86_64-pc-windows-gnu`. Final binary: `xbgg.exe` v0.1.1, SHA-256
-`c049809493632f7ae8f718de5f2ca9176a693d2f635f02ad2ed20bd571a0e5db`.
+`x86_64-pc-windows-gnu`.
 
-v0.1.1 differs from v0.1.0 only by the keyboard-layout fix (bug #10). The
-benchmark, add/launch/remove, focus-switch, Deadlock, update and Defender
-checks were re-run on the v0.1.1 binary; the long soaks ran on v0.1.0.
+- **v0.2.0** (Boost mode): see [Boost](#boost) and [v0.2.0 regression](#v020-regression)
+  below. Final binary `xbgg.exe` v0.2.0, SHA-256
+  `1d56ac83a0fac7c73907f08b9606a392192d52de669adc8d035dbb7030217670`: the full
+  Boost end-to-end test passed on it (19/19: 1522 MB → 0 MB, +1373 MB
+  available, restored 2.3 s after exit, crash recovery OK), and Microsoft
+  Defender found no threats in it or the zip.
+- v0.1.1 (`c0498094…a0e5db`) differs from v0.1.0 only by the keyboard-layout
+  fix (bug #10).
+
+## Boost
+
+### Unit and integration tests (`cargo test --release`, core)
+
+| Test | What it proves |
+|---|---|
+| `freezes_and_restores_a_real_process` | A live `ping -t` stops printing while frozen and prints again after restore; journal is written before acting and removed after. |
+| `leftover_journal_from_a_crash_is_restored` | Session dropped without `end()` (simulated crash): `restore_leftover` resumes the process from the journal. |
+| `protected_dir_is_not_frozen` | Nothing running from the game's folder is ever frozen. |
+| `protected_processes_are_never_frozen` | `steam.exe`, `explorer.exe`, `svchost.exe` etc. can't be frozen even if added to the list. |
+| `shared_folders_are_not_game_folders` | `System32`, `Program Files`, drive roots are never treated as a game's folder. |
+| `lists_configured_and_suggested_apps_without_protected_ones` | The "Apps to freeze" list. |
+| journal round-trip, config defaults/back-compat, GUID round-trip, vertical controller input | |
+
+### End to end with a real game — `tools/boost-test.ps1`
+
+Freeze list for the test: `memhog.exe` (a test program holding 1.5 GB and
+touching it every second, like a real app) and `wallpaper32.exe` (Wallpaper
+Engine, running on the test machine). No other user app was touched. Game:
+Deadlock via Steam. High priority enabled for the test.
+
+Final run (all 19 checks):
+
+| Check | Result |
+|---|---|
+| memhog frozen while the game runs | ✅ |
+| memhog working set | ✅ 1522 MB → 0 MB |
+| Wallpaper Engine frozen | ✅ |
+| Game at High priority (Deadlock resets its own priority ~6 s after start; Boost re-applies it) | ✅ High, still High 30 s later |
+| Game itself not frozen | ✅ |
+| Journal written, guard process running | ✅ |
+| XBGG CPU while boosting the running game (30 s, first minute of play) | ✅ 31 ms XBGG + 0 ms guard |
+| Everything resumed after the game closed | ✅ **2.4 s** after exit |
+| Journal removed | ✅ |
+| Available RAM gained by freezing memhog (measured with nothing else loading) | ✅ **+1328 MB** (5.9 → 7.2 GB) |
+| **Crash test**: XBGG force-killed mid-boost → guard restored memhog and Wallpaper Engine, removed the journal, then exited | ✅ within 1 s |
+
+Issues the test found and that were fixed before release:
+
+| Found | Problem | Fix |
+|---|---|---|
+| Run 2 | Deadlock resets its own priority to Normal ~6 s after it starts, undoing "High priority". | Re-apply during the game's first 60 s (cheap check every 2 s), then stop. |
+| Run 3 | Re-scanning every process every 2 s during start-up cost 156 ms CPU / 30 s. | `DirScanner` looks up each PID once; full rescans every 10 s; 31 ms / 30 s. |
+| Run 4 | Apps stayed frozen ~20 s after the game closed. | Liveness check of known game processes every 2 s → resumed 2.4 s after exit. |
+| Review | A custom `.exe` in a shared folder (e.g. `System32`) would have made unrelated processes count as "the game", so the boost would never end. | Track the PID XBGG starts; only scan folders that belong to the game. |
+| Test harness | "All threads suspended" was too strict: a thread in a kernel wait shows *Executive* until the suspension applies when it returns. | Test checks: no thread running and ≥ 90 % suspended. |
+
+### v0.2.0 regression
+
+| Test | Result |
+|---|---|
+| Unit tests | 31 passed, 0 failed |
+| `cargo clippy --all-targets` | no warnings |
+| `bench.ps1 -Fullscreen` | startup 349 ms · idle CPU 16 ms / 10 s · 25.5 MB private · 0 MB VRAM |
+| `soak.ps1 -Cycles 150` (now also opens the menu and the app list every cycle, ~300 process handles each time) | private 27.4 → 27.2 MB, handles 300 → 289, GDI 17 → 17 |
+| `focus-soak.ps1 -Switches 30` | threads 12 → 12, handles 299 → 299 |
+| `custom-entry-test.ps1` | PASS |
+| `game-launch-test.ps1` (Deadlock, XBGG alone) | XBGG 16 ms CPU over 30 s of play, back in front after exit |
+| `update-test.ps1` (through the new menu) | PASS |
 
 ## Test environment
 

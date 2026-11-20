@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 pub enum PadAction {
     Left,
     Right,
+    Up,
+    Down,
     PageLeft,
     PageRight,
     Activate,
@@ -35,6 +37,8 @@ pub enum Button {
     North,  // Y
     DPadLeft,
     DPadRight,
+    DPadUp,
+    DPadDown,
     LeftBumper,
     RightBumper,
     Select, // View
@@ -42,13 +46,15 @@ pub enum Button {
 }
 
 /// XInput button bits (XINPUT_GAMEPAD_*), paired with our names.
-const BUTTON_BITS: [(u16, Button); 10] = [
+const BUTTON_BITS: [(u16, Button); 12] = [
     (0x1000, Button::South),
     (0x2000, Button::East),
     (0x4000, Button::West),
     (0x8000, Button::North),
     (0x0004, Button::DPadLeft),
     (0x0008, Button::DPadRight),
+    (0x0001, Button::DPadUp),
+    (0x0002, Button::DPadDown),
     (0x0100, Button::LeftBumper),
     (0x0200, Button::RightBumper),
     (0x0020, Button::Select),
@@ -72,6 +78,8 @@ pub enum Input {
     Pressed(Button),
     Released(Button),
     StickX(f32),
+    /// Positive is up.
+    StickY(f32),
     Disconnected,
 }
 
@@ -80,6 +88,7 @@ pub enum Input {
 pub struct PadState {
     pub buttons: u16,
     pub stick_x: f32,
+    pub stick_y: f32,
 }
 
 /// Differences between two readings, as inputs.
@@ -95,13 +104,17 @@ pub fn diff(prev: PadState, cur: PadState, out: &mut Vec<Input>) {
     if cur.stick_x != prev.stick_x {
         out.push(Input::StickX(cur.stick_x));
     }
+    if cur.stick_y != prev.stick_y {
+        out.push(Input::StickY(cur.stick_y));
+    }
 }
 
 /// Turns raw input into actions, including hold-to-repeat for directions.
 #[derive(Debug, Default)]
 pub struct Repeater {
     held: Option<(PadAction, Instant)>,
-    stick: Option<PadAction>,
+    stick_x: Option<PadAction>,
+    stick_y: Option<PadAction>,
 }
 
 impl Repeater {
@@ -111,6 +124,8 @@ impl Repeater {
                 let action = match button {
                     Button::DPadLeft => return Some(self.hold(PadAction::Left, now)),
                     Button::DPadRight => return Some(self.hold(PadAction::Right, now)),
+                    Button::DPadUp => return Some(self.hold(PadAction::Up, now)),
+                    Button::DPadDown => return Some(self.hold(PadAction::Down, now)),
                     Button::LeftBumper => PadAction::PageLeft,
                     Button::RightBumper => PadAction::PageRight,
                     Button::South => PadAction::Activate,
@@ -122,35 +137,60 @@ impl Repeater {
                 };
                 Some(action)
             }
-            Input::Released(Button::DPadLeft | Button::DPadRight) => {
+            Input::Released(Button::DPadLeft | Button::DPadRight | Button::DPadUp | Button::DPadDown) => {
                 self.held = None;
                 None
             }
             Input::Released(_) => None,
             Input::StickX(value) => {
-                let dir = if value <= -STICK_PRESS {
-                    Some(PadAction::Left)
-                } else if value >= STICK_PRESS {
-                    Some(PadAction::Right)
-                } else if value.abs() <= STICK_RELEASE {
-                    None
-                } else {
-                    self.stick // dead band: keep the current state
-                };
-                if dir == self.stick {
-                    return None;
-                }
-                self.stick = dir;
-                match dir {
-                    Some(d) => Some(self.hold(d, now)),
-                    None => {
-                        self.held = None;
-                        None
-                    }
-                }
+                let mut state = self.stick_x;
+                let out = self.axis(value, PadAction::Left, PadAction::Right, &mut state, now);
+                self.stick_x = state;
+                out
+            }
+            Input::StickY(value) => {
+                let mut state = self.stick_y;
+                let out = self.axis(value, PadAction::Down, PadAction::Up, &mut state, now);
+                self.stick_y = state;
+                out
             }
             Input::Disconnected => {
                 self.reset();
+                None
+            }
+        }
+    }
+
+    /// One stick axis with hysteresis: press beyond ±STICK_PRESS, release
+    /// inside ±STICK_RELEASE, keep the state in between.
+    fn axis(
+        &mut self,
+        value: f32,
+        negative: PadAction,
+        positive: PadAction,
+        state: &mut Option<PadAction>,
+        now: Instant,
+    ) -> Option<PadAction> {
+        let dir = if value <= -STICK_PRESS {
+            Some(negative)
+        } else if value >= STICK_PRESS {
+            Some(positive)
+        } else if value.abs() <= STICK_RELEASE {
+            None
+        } else {
+            *state
+        };
+        if dir == *state {
+            return None;
+        }
+        let previous = std::mem::replace(state, dir);
+        match dir {
+            Some(d) => Some(self.hold(d, now)),
+            None => {
+                // Only stop repeating if this axis was the one being held.
+                if self.held.map(|(h, _)| Some(h) == previous).unwrap_or(false) {
+                    self.held = None;
+                }
                 None
             }
         }
@@ -168,7 +208,8 @@ impl Repeater {
 
     pub fn reset(&mut self) {
         self.held = None;
-        self.stick = None;
+        self.stick_x = None;
+        self.stick_y = None;
     }
 
     fn hold(&mut self, dir: PadAction, now: Instant) -> PadAction {
@@ -253,8 +294,12 @@ fn read_pad(slot: u32) -> Option<PadState> {
     if unsafe { XInputGetState(slot, &mut state) } != 0 {
         return None;
     }
-    let lx = state.Gamepad.sThumbLX as f32 / 32767.0;
-    Some(PadState { buttons: state.Gamepad.wButtons as u16, stick_x: lx.clamp(-1.0, 1.0) })
+    let axis = |v: i16| (v as f32 / 32767.0).clamp(-1.0, 1.0);
+    Some(PadState {
+        buttons: state.Gamepad.wButtons as u16,
+        stick_x: axis(state.Gamepad.sThumbLX),
+        stick_y: axis(state.Gamepad.sThumbLY),
+    })
 }
 
 #[cfg(not(windows))]
@@ -304,6 +349,21 @@ mod tests {
     }
 
     #[test]
+    fn vertical_inputs() {
+        let mut r = Repeater::default();
+        let t = Instant::now();
+        assert_eq!(r.input(Input::Pressed(Button::DPadUp), t), Some(PadAction::Up));
+        r.input(Input::Released(Button::DPadUp), t);
+        assert_eq!(r.input(Input::StickY(-0.9), t), Some(PadAction::Down));
+        assert_eq!(r.tick(t + REPEAT_DELAY), Some(PadAction::Down));
+        // Releasing the X axis must not cancel a Y-axis hold.
+        r.input(Input::StickX(0.0), t);
+        assert_eq!(r.tick(t + REPEAT_DELAY + REPEAT_RATE), Some(PadAction::Down));
+        r.input(Input::StickY(0.0), t);
+        assert_eq!(r.tick(t + Duration::from_secs(5)), None);
+    }
+
+    #[test]
     fn disconnect_stops_repeat() {
         let mut r = Repeater::default();
         let t = Instant::now();
@@ -314,8 +374,8 @@ mod tests {
 
     #[test]
     fn diff_reports_edges_only() {
-        let a = PadState { buttons: 0x1000, stick_x: 0.0 };
-        let b = PadState { buttons: 0x1000 | 0x0008, stick_x: 0.7 };
+        let a = PadState { buttons: 0x1000, stick_x: 0.0, stick_y: 0.0 };
+        let b = PadState { buttons: 0x1000 | 0x0008, stick_x: 0.7, stick_y: 0.0 };
         let mut out = Vec::new();
         diff(a, b, &mut out);
         assert_eq!(out, vec![Input::Pressed(Button::DPadRight), Input::StickX(0.7)]);

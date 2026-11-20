@@ -35,6 +35,7 @@ pub fn scan() -> Result<Vec<Game>> {
             .map(|p| p.split_whitespace().map(str::to_string).collect())
             .unwrap_or_default();
         let working_dir = get("workingDir").or_else(|| get("path")).map(PathBuf::from);
+        let install_dir = get("path").map(PathBuf::from).or_else(|| exe.parent().map(|p| p.to_path_buf()));
 
         games.push(Game {
             id: format!("gog:{id}"),
@@ -44,6 +45,7 @@ pub fn scan() -> Result<Vec<Game>> {
             cover: None,
             hero: None,
             last_played: None,
+            install_dir,
         });
     }
     Ok(games)

@@ -8,6 +8,8 @@ mod art;
 mod gamepad;
 mod platform;
 mod update;
+#[cfg(windows)]
+mod boost;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -38,6 +40,9 @@ struct App {
     layout_timer: Timer,
     /// Filled by the background update check.
     pending_update: Arc<Mutex<Option<update::Release>>>,
+    boost: RefCell<boost::Controller>,
+    /// Rows currently shown on the "Apps to freeze" screen.
+    app_rows: RefCell<Vec<xbgg_core::boost::apps::AppInfo>>,
 }
 
 impl App {
@@ -106,6 +111,7 @@ Options:
   --no-update      Skip the update check on startup
   --list           Print the detected game library and exit
   --check-update   Check GitHub for a newer release and exit
+  --restore        Unfreeze apps left frozen by an interrupted boost and exit
   --version        Print the version and exit
   --help           Show this help";
 
@@ -138,6 +144,26 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
 
+    // Internal: restores a boost if the XBGG process with this PID dies.
+    if let Some(i) = args.iter().position(|a| a == "--boost-guard") {
+        if let Some(pid) = args.get(i + 1).and_then(|p| p.parse().ok()) {
+            boost::guard(pid);
+        }
+        return Ok(());
+    }
+    if has("--restore") {
+        platform::attach_console();
+        match boost::recover() {
+            Some(r) => println!(
+                "Restored an interrupted boost: {} processes resumed, {} already gone{}",
+                r.resumed,
+                r.gone,
+                if r.power_restored { ", power mode restored" } else { "" }
+            ),
+            None => println!("Nothing to restore"),
+        }
+        return Ok(());
+    }
     if has("--help") || has("-h") {
         platform::attach_console();
         println!("{HELP}");
@@ -185,6 +211,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     update::cleanup_previous();
+    // A boost interrupted by a crash or power loss: put everything back first.
+    let recovered = boost::recover();
 
     let ui = AppWindow::new()?;
     ui.set_version(update::current_version().to_string().into());
@@ -201,9 +229,16 @@ fn main() -> anyhow::Result<()> {
         covers: RefCell::default(),
         layout_timer: Timer::default(),
         pending_update: Arc::default(),
+        boost: RefCell::default(),
+        app_rows: RefCell::default(),
     });
     app.sync(&ui, None);
-    let _ = report_warnings(&app, &ui);
+    let had_warning = report_warnings(&app, &ui);
+    if let Some(r) = recovered.filter(|r| r.resumed > 0 || r.power_restored) {
+        if !had_warning {
+            app.set_status(&ui, format!("Restored an interrupted boost: {} processes resumed", r.resumed));
+        }
+    }
 
     wire_callbacks(&app, &ui);
     let _clock = start_clock(&ui);
@@ -223,8 +258,143 @@ fn main() -> anyhow::Result<()> {
             ui.invoke_layout_changed();
         }
     });
-    ui.run()?;
+    let result = ui.run();
+    // However XBGG closes (menu, window button, update restart), unfreeze
+    // everything before the process ends.
+    app.boost.borrow_mut().shutdown();
+    result?;
     Ok(())
+}
+
+fn on_off(on: bool) -> slint::SharedString {
+    if on { "On".into() } else { "Off".into() }
+}
+
+fn refresh_menu(app: &App, ui: &AppWindow) {
+    let cfg = app.library.borrow().boost().clone();
+    let active = app.boost.borrow_mut().is_active();
+    let row = |id: &str, label: &str, value: slint::SharedString, on: bool, dim: bool| MenuRow {
+        id: id.into(),
+        label: label.into(),
+        value,
+        on,
+        dim,
+    };
+    let mut rows = Vec::new();
+    let update = ui.get_update_version();
+    if !update.is_empty() {
+        rows.push(row("update", &format!("Install update v{update}"), "New".into(), true, false));
+    }
+    rows.push(row("boost", "Boost while playing", on_off(cfg.enabled), cfg.enabled, false));
+    let off = !cfg.enabled;
+    rows.push(row("freeze", "Freeze background apps", on_off(cfg.freeze_apps), cfg.freeze_apps, off));
+    rows.push(row(
+        "apps",
+        "Apps to freeze",
+        format!("{} selected", cfg.freeze_list.len()).into(),
+        false,
+        off || !cfg.freeze_apps,
+    ));
+    rows.push(row("power", "Best performance power mode", on_off(cfg.power_mode), cfg.power_mode, off));
+    rows.push(row("priority", "High priority for games", on_off(cfg.game_priority), cfg.game_priority, off));
+    if active {
+        rows.push(row("end", "End boost now", "Active".into(), true, false));
+    }
+    rows.push(row("rescan", "Rescan library", "".into(), false, false));
+    rows.push(row("exit", "Exit XBGG", "".into(), false, false));
+
+    let count = rows.len() as i32;
+    ui.set_menu_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_menu_index(ui.get_menu_index().clamp(0, count - 1));
+}
+
+fn refresh_apps(app: &App, ui: &AppWindow) {
+    let rows: Vec<AppRow> = app
+        .app_rows
+        .borrow()
+        .iter()
+        .map(|a| AppRow {
+            name: a.name.trim_end_matches(".exe").into(),
+            detail: if a.running() {
+                format!(
+                    "Running · {} process{} · {}",
+                    a.processes,
+                    if a.processes == 1 { "" } else { "es" },
+                    boost::mib(a.memory)
+                )
+                .into()
+            } else {
+                "Not running".into()
+            },
+            on: a.selected,
+        })
+        .collect();
+    let count = rows.len() as i32;
+    ui.set_app_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_app_index(ui.get_app_index().clamp(0, (count - 1).max(0)));
+}
+
+fn start_boost(
+    app: &App,
+    ui: &AppWindow,
+    cfg: xbgg_core::boost::BoostConfig,
+    game_dir: Option<std::path::PathBuf>,
+    game_pid: Option<u32>,
+) {
+    let weak = ui.as_weak();
+    app.boost.borrow_mut().start(cfg, game_dir, game_pid, move |event| {
+        let _ = weak.upgrade_in_event_loop(move |ui| on_boost_event(&ui, event));
+    });
+    ui.set_boost_chip("starting…".into());
+}
+
+fn on_boost_event(ui: &AppWindow, event: boost::Event) {
+    match event {
+        boost::Event::Started(r) => {
+            let gained = r.ram_after.saturating_sub(r.ram_before);
+            let mut chip = Vec::new();
+            if !r.frozen_apps.is_empty() {
+                chip.push(format!("{} apps frozen", r.frozen_apps.len()));
+            }
+            if gained >= 100 << 20 {
+                chip.push(format!("+{} RAM", boost::gib(gained)));
+            }
+            if r.power_changed {
+                chip.push("best performance".into());
+            }
+            if chip.is_empty() {
+                chip.push("on".into());
+            }
+            ui.set_boost_chip(chip.join(" · ").into());
+
+            let mut status = String::from("Boost on");
+            if !r.frozen_apps.is_empty() {
+                let names: Vec<_> = r.frozen_apps.iter().take(3).map(|n| n.trim_end_matches(".exe")).collect();
+                let more = r.frozen_apps.len().saturating_sub(3);
+                status += &format!(" — froze {}{}", names.join(", "), if more > 0 { format!(" +{more}") } else { String::new() });
+                status += &format!(" · {} released", boost::mib(r.trimmed_bytes));
+            }
+            if !r.skipped.is_empty() {
+                status += &format!(" · {} not allowed", r.skipped.len());
+            }
+            ui.set_status(status.into());
+        }
+        boost::Event::GameFound => {}
+        boost::Event::Ended(s) => {
+            ui.set_boost_chip("".into());
+            let mut status = format!("Boost ended — {} after {}", s.reason, boost::duration(s.duration));
+            if s.restore.resumed > 0 {
+                status += &format!(" · {} processes resumed", s.restore.resumed);
+            }
+            if s.restore.power_restored {
+                status += " · power mode restored";
+            }
+            ui.set_status(status.into());
+            if ui.get_panel() == 1 {
+                ui.invoke_menu_open();
+            }
+        }
+    }
 }
 
 fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
@@ -240,11 +410,15 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
                 .library
                 .borrow_mut()
                 .launch(index as usize)
-                .map(|g| (g.title.clone(), g.id.clone()));
+                .map(|(g, pid)| (g.title.clone(), g.id.clone(), g.install_dir.clone(), pid));
             match result {
-                Ok((title, id)) => {
+                Ok((title, id, install_dir, pid)) => {
                     app.last_launch.set(Some(Instant::now()));
                     app.set_status(&ui, format!("Launching {title}…"));
+                    let cfg = app.library.borrow().boost().clone();
+                    if cfg.enabled {
+                        start_boost(&app, &ui, cfg, install_dir, pid);
+                    }
                     // Move the game to the front once the launch has settled,
                     // so the carousel does not jump while the user is watching.
                     let (app, weak) = (app.clone(), ui.as_weak());
@@ -409,6 +583,84 @@ fn wire_callbacks(app: &Rc<App>, ui: &AppWindow) {
         });
     }
 
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_menu_open(move || {
+            if let Some(ui) = weak.upgrade() {
+                refresh_menu(&app, &ui);
+            }
+        });
+    }
+
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_menu_select(move |id| {
+            let Some(ui) = weak.upgrade() else { return };
+            let toggle = |f: fn(&mut xbgg_core::boost::BoostConfig)| {
+                if let Err(e) = app.library.borrow_mut().update_boost(f) {
+                    app.set_status(&ui, format!("Couldn't save settings: {e:#}"));
+                }
+            };
+            match id.as_str() {
+                "boost" => toggle(|c| c.enabled = !c.enabled),
+                "freeze" => toggle(|c| c.freeze_apps = !c.freeze_apps),
+                "power" => toggle(|c| c.power_mode = !c.power_mode),
+                "priority" => toggle(|c| c.game_priority = !c.game_priority),
+                "apps" => ui.invoke_open_apps(),
+                "end" => {
+                    app.boost.borrow_mut().stop();
+                    app.set_status(&ui, "Ending boost…");
+                }
+                "update" => {
+                    ui.set_panel(0);
+                    ui.set_dialog(3);
+                }
+                "rescan" => {
+                    ui.set_panel(0);
+                    ui.invoke_rescan();
+                }
+                "exit" => {
+                    ui.set_panel(0);
+                    ui.set_dialog(1);
+                }
+                _ => {}
+            }
+            if ui.get_panel() == 1 {
+                refresh_menu(&app, &ui);
+            }
+        });
+    }
+
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_apps_open(move || {
+            if let Some(ui) = weak.upgrade() {
+                let apps = xbgg_core::boost::apps::candidates(app.library.borrow().boost());
+                *app.app_rows.borrow_mut() = apps;
+                refresh_apps(&app, &ui);
+            }
+        });
+    }
+
+    {
+        let (app, weak) = (app.clone(), ui.as_weak());
+        ui.on_app_toggle(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(name) = app.app_rows.borrow().get(index as usize).map(|a| a.name.clone()) else { return };
+            let result = app.library.borrow_mut().update_boost(|c| c.toggle_app(&name));
+            match result {
+                Ok(()) => {
+                    let selected = app.library.borrow().boost().freeze_list.contains(&name);
+                    if let Some(row) = app.app_rows.borrow_mut().get_mut(index as usize) {
+                        row.selected = selected;
+                    }
+                    refresh_apps(&app, &ui);
+                }
+                Err(e) => app.set_status(&ui, format!("Couldn't save settings: {e:#}")),
+            }
+        });
+    }
+
     ui.on_quit(|| {
         let _ = slint::quit_event_loop();
     });
@@ -464,6 +716,8 @@ fn start_gamepad(ui: &AppWindow) {
                 PadAction::Secondary => ui.invoke_secondary(),
                 PadAction::Refresh => ui.invoke_refresh(),
                 PadAction::Menu => ui.invoke_menu(),
+                PadAction::Up => ui.invoke_nav_vertical(-1),
+                PadAction::Down => ui.invoke_nav_vertical(1),
             }
         });
     });

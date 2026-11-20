@@ -49,4 +49,6 @@ pub struct Game {
     pub hero: Option<PathBuf>,
     /// Unix seconds of the last launch known to either the store or XBGG.
     pub last_played: Option<u64>,
+    /// Folder the game runs from; used to recognise its process for Boost.
+    pub install_dir: Option<PathBuf>,
 }
