@@ -32,6 +32,7 @@ layout, with square tiles, labels, keys and checkboxes.
 | `focus-soak.ps1 -Switches 30` | threads 13 → 13, handles 291 → 291 (25/30 foreground hand-overs: the user's Deadlock was running full screen during this run) |
 | `custom-entry-test.ps1`, `update-test.ps1` | PASS |
 | `game-launch-test.ps1`, `boost-test.ps1` | not re-run: the user was playing Deadlock at the time; Boost code unchanged since v0.3.0 |
+| Real update, published binaries: v0.3.0 → Menu → install update → v0.4.0 | PASS (exited 4 s after confirming, SHA-256 matches the release, no leftovers, settings kept) |
 
 ## v0.3.0 — terminal UI
 
