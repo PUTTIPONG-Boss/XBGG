@@ -71,6 +71,7 @@ Issues the test found and that were fixed before release:
 | `custom-entry-test.ps1` | PASS |
 | `game-launch-test.ps1` (Deadlock, XBGG alone) | XBGG 16 ms CPU over 30 s of play, back in front after exit |
 | `update-test.ps1` (through the new menu) | PASS |
+| **Real update, published binaries only**: v0.1.1 downloaded from GitHub, F2 + Enter → exited 2 s later, restarted as v0.2.0; installed SHA-256 equals the published v0.2.0 checksum, no leftover files | PASS |
 
 ## Test environment
 
